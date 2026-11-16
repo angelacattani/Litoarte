@@ -13,13 +13,23 @@ source .venv/bin/activate
 streamlit run app_custos.py
 ```
 
-Windows (PowerShell):
+Windows — forma mais simples: **duplo clique em `iniciar.bat`**. Na primeira
+execução ele cria o `.venv` e instala as dependências (alguns minutos); nas
+seguintes, abre o sistema direto no navegador. Para encerrar, feche a janela
+preta do terminal.
+
+Windows pelo PowerShell:
 
 ```powershell
-.\setup.ps1
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
 .\.venv\Scripts\Activate.ps1
 streamlit run app_custos.py
 ```
+
+Pré-requisitos no Windows: [Python 3.11+](https://www.python.org/downloads/)
+(marque *Add python.exe to PATH* na instalação) e, para clonar,
+[Git for Windows](https://git-scm.com/download/win) — ou baixe o ZIP pelo
+botão *Code → Download ZIP* no GitHub.
 
 O app abre em http://localhost:8502.
 
@@ -86,6 +96,7 @@ em faturamento.
 ```
 sistema-custos/
 ├── pyproject.toml         pacote + dependências
+├── iniciar.bat            Windows: duplo clique para instalar e abrir
 ├── setup.sh / setup.ps1   criação do ambiente virtual
 ├── app_custos.py          interface Streamlit
 ├── custos/
