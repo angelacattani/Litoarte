@@ -80,8 +80,8 @@ recentes. A mesma página permite fazer backup na hora e baixar uma cópia do
 | Mão de obra direta | salário, encargos %, horas produtivas/mês, nº de funcionários → custo-hora |
 | Custos fixos | valores mensais por categoria |
 | Custos variáveis | **percentual** sobre o preço (impostos, comissão, cartão) ou **unitário** em R$/un (frete, embalagem avulsa) |
-| Grupos e subgrupos | cadastro hierárquico (grupo › subgrupo), contagem de produtos, renomear/unificar |
-| Produtos | grupo › subgrupo, margem desejada (ou padrão), volume mensal previsto, preço atual praticado |
+| Grupos e subgrupos | código + descrição; subgrupo com código único dentro do grupo; contagem de produtos; troca de código em cascata |
+| Produtos | vínculo por código de grupo e subgrupo, margem desejada (ou padrão), volume mensal previsto, preço atual praticado |
 | Ficha técnica | consumo de MP por unidade com % de perda; horas de MO por função |
 | Concorrentes | preço por produto e concorrente, com data de coleta |
 | Painel | resultado por grupo/subgrupo (faturamento, MC, lucro, participação), filtro por grupo, preço sugerido, mínimo, cobertura, markup, MC, posição vs. concorrência, alertas, DRE projetada, ponto de equilíbrio, ocupação da MO |
@@ -114,18 +114,26 @@ em faturamento.
 ## Importação de dados existentes
 
 - **XLSX**: uma aba por tabela, com os nomes `materias_primas`, `mao_de_obra`,
-  `custos_fixos`, `custos_variaveis`, `grupos`, `produtos`, `composicao`,
+  `custos_fixos`, `custos_variaveis`, `grupos`, `subgrupos`, `produtos`, `composicao`,
   `produto_mao_de_obra`, `concorrentes` (baixe a planilha-modelo no app; a
   aba `instrucoes` descreve cada coluna). O arquivo exportado pelo sistema
   pode ser reimportado diretamente.
 - **CSV**: uma tabela por arquivo; separador `;` ou `,`; números `1.234,56`
   ou `1234.56`; UTF-8 ou Latin-1. Nomes de coluna comuns são reconhecidos
   (`SKU`, `Produto`, `Nome`, `Preço Venda`, `Custo (R$)`...).
-- **Grupo e subgrupo do produto**: colunas `grupo` e `subgrupo` (também
-  aceitas: *Família*, *Linha*, *Categoria*, *Departamento* / *Sub-grupo*,
-  *Subcategoria*, *Subfamília*). Grupos inexistentes são criados
-  automaticamente; grafias equivalentes (`cozinha`, ` COZINHA `) são
-  unificadas na já cadastrada. Produto sem grupo recebe *Sem grupo › Geral*.
+- **Grupo e subgrupo do produto** — o produto guarda os códigos
+  (`grupo_codigo`, `subgrupo_codigo`; também aceitos *Cód. Grupo*,
+  *Cod_Subgrupo* etc.). A planilha de produtos pode trazer:
+  - **códigos** — usados diretamente; código inexistente cria o grupo/subgrupo
+    com o nome da planilha (ou "Grupo 05");
+  - **só nomes** (*Grupo*, *Família*, *Linha*, *Categoria* / *Subgrupo*,
+    *Subcategoria*...) — localizados pela descrição cadastrada, sem diferenciar
+    maiúsculas e espaços; se não existirem, são criados com o próximo código;
+  - **nada** — o produto vai para `00 Sem grupo › 00 Geral`.
+
+  Códigos numéricos que o Excel converteu em número (1 em vez de 01) casam
+  com o código cadastrado. Para importar a estrutura completa, use as abas
+  `grupos` (codigo, descricao) e `subgrupos` (grupo_codigo, codigo, descricao).
 - Modos: **mesclar** (upsert pela chave) ou **substituir**.
 - Linhas inválidas (campo obrigatório vazio, número negativo, referência a
   código inexistente) são descartadas e listadas no aviso de importação.

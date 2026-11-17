@@ -18,7 +18,9 @@ import pandas as pd
 
 from .modelos import ESQUEMAS, ORDEM_TABELAS, PARAMETROS_PADRAO
 from .trava import TravaEdicao
-from .validacao import checar_referencias, sincronizar_grupos, validar
+from .modelos import (GRUPO_PADRAO, GRUPO_PADRAO_COD, SUBGRUPO_PADRAO, SUBGRUPO_PADRAO_COD)
+from .validacao import (checar_referencias, proteger_grupos_em_uso, proximo_codigo,
+                        resolver_grupos_produtos, validar)
 
 
 class SomenteLeitura(PermissionError):
@@ -38,6 +40,7 @@ class Repositorio:
         with self._conexao() as con:
             # DELETE (e não WAL): WAL não funciona em pastas de rede.
             con.execute("PRAGMA journal_mode=DELETE")
+            v1 = self._grupos_v1_pendente(con)
             for esq in ESQUEMAS.values():
                 con.execute(esq.ddl())
                 # migração: bancos criados por versões anteriores ganham as colunas novas
@@ -46,6 +49,54 @@ class Repositorio:
                     if c.nome not in existentes:
                         con.execute(f'ALTER TABLE "{esq.tabela}" ADD COLUMN "{c.nome}" {c.sql}')
             con.execute('CREATE TABLE IF NOT EXISTS parametros (chave TEXT PRIMARY KEY, valor TEXT)')
+            if v1:
+                self._migrar_grupos_v1(con)
+            # grupo/subgrupo padrão sempre disponível para produtos sem classificação
+            con.execute("INSERT OR IGNORE INTO grupos (codigo, descricao) VALUES (?, ?)",
+                        (GRUPO_PADRAO_COD, GRUPO_PADRAO))
+            con.execute("INSERT OR IGNORE INTO subgrupos (grupo_codigo, codigo, descricao) VALUES (?, ?, ?)",
+                        (GRUPO_PADRAO_COD, SUBGRUPO_PADRAO_COD, SUBGRUPO_PADRAO))
+            con.execute("UPDATE produtos SET grupo_codigo = ? WHERE grupo_codigo IS NULL", (GRUPO_PADRAO_COD,))
+            con.execute("UPDATE produtos SET subgrupo_codigo = ? WHERE subgrupo_codigo IS NULL",
+                        (SUBGRUPO_PADRAO_COD,))
+
+    # ------------------------------------------------------------- migrações
+    @staticmethod
+    def _grupos_v1_pendente(con) -> bool:
+        """Versão anterior: tabela grupos(grupo, subgrupo) e produtos com nomes."""
+        cols = {r[1] for r in con.execute('PRAGMA table_info("grupos")')}
+        if "grupo" in cols and "codigo" not in cols:
+            con.execute('ALTER TABLE grupos RENAME TO grupos_v1')
+            return True
+        return False
+
+    @staticmethod
+    def _migrar_grupos_v1(con) -> None:
+        """Gera códigos (01, 02...) para os grupos/subgrupos por nome e vincula os produtos."""
+        pares = set(con.execute("SELECT grupo, subgrupo FROM grupos_v1").fetchall())
+        cols_p = {r[1] for r in con.execute('PRAGMA table_info("produtos")')}
+        if {"grupo", "subgrupo"} <= cols_p:
+            pares |= set(con.execute("SELECT grupo, subgrupo FROM produtos WHERE grupo IS NOT NULL").fetchall())
+        cod_g: dict[str, str] = {GRUPO_PADRAO: GRUPO_PADRAO_COD}
+        cod_s: dict[tuple[str, str], str] = {}
+        for g, sg in sorted(pares, key=lambda x: (str(x[0]).casefold(), str(x[1]).casefold())):
+            g, sg = str(g), str(sg or SUBGRUPO_PADRAO)
+            if g not in cod_g:
+                cod_g[g] = proximo_codigo([c for c in cod_g.values() if c != GRUPO_PADRAO_COD])
+            gc = cod_g[g]
+            if (gc, sg) not in cod_s:
+                existentes = [c for (a, _), c in cod_s.items() if a == gc]
+                cod_s[(gc, sg)] = SUBGRUPO_PADRAO_COD if sg == SUBGRUPO_PADRAO else proximo_codigo(existentes)
+        con.executemany("INSERT OR IGNORE INTO grupos (codigo, descricao) VALUES (?, ?)",
+                        [(c, g) for g, c in cod_g.items()])
+        con.executemany("INSERT OR IGNORE INTO subgrupos (grupo_codigo, codigo, descricao) VALUES (?, ?, ?)",
+                        [(gc, c, sg) for (gc, sg), c in cod_s.items()])
+        if {"grupo", "subgrupo"} <= cols_p:
+            for g, gc in cod_g.items():
+                con.execute("UPDATE produtos SET grupo_codigo = ? WHERE grupo = ?", (gc, g))
+            for (gc, sg), c in cod_s.items():
+                con.execute("UPDATE produtos SET subgrupo_codigo = ? WHERE grupo_codigo = ? AND subgrupo = ?",
+                            (c, gc, sg))
 
     @property
     def pode_gravar(self) -> bool:
@@ -102,10 +153,16 @@ class Repositorio:
             raise ValueError("modo deve ser 'mesclar' ou 'substituir'")
         erros: list[str] = []
         dados = self.carregar_tudo()
+        antes = dict(dados)
         for tabela in ORDEM_TABELAS:
             if tabela not in novos:
                 continue
-            df, e = validar(novos[tabela], tabela)
+            bruto = novos[tabela]
+            if tabela == "produtos":
+                bruto, dados["grupos"], dados["subgrupos"], e = resolver_grupos_produtos(
+                    bruto, dados["grupos"], dados["subgrupos"])
+                erros += e
+            df, e = validar(bruto, tabela)
             erros += e
             if modo == "mesclar" and not dados[tabela].empty:
                 chave = list(ESQUEMAS[tabela].chave)
@@ -113,32 +170,36 @@ class Repositorio:
                 df = pd.concat([base[~base.index.isin(df.set_index(chave).index)].reset_index(), df],
                                ignore_index=True)
             dados[tabela] = df
-        dados, e = sincronizar_grupos(dados)
+        dados, e = proteger_grupos_em_uso(dados, antes)
         erros += e
         dados, e = checar_referencias(dados)
         erros += e
         self._gravar(dados)
         return erros
 
-    def renomear_grupo(self, grupo: str, novo_grupo: str, subgrupo: str | None = None,
-                       novo_subgrupo: str | None = None) -> int:
-        """Renomeia um grupo (ou um subgrupo dele) no cadastro e em todos os produtos.
-
-        Retorna o nº de produtos alterados. Renomear para um nome já existente
-        funde os dois grupos/subgrupos.
-        """
+    def alterar_codigo_grupo(self, antigo: str, novo: str) -> int:
+        """Troca o código de um grupo em cascata (subgrupos e produtos). Retorna nº de produtos."""
+        if antigo == GRUPO_PADRAO_COD:
+            raise ValueError(f"O grupo padrão ({GRUPO_PADRAO_COD} - {GRUPO_PADRAO}) não pode ter o código alterado.")
         dados = self.carregar_tudo()
-        g, p = dados["grupos"], dados["produtos"]
-        if subgrupo is None:
-            mg, mp = g["grupo"] == grupo, p["grupo"] == grupo
-            g.loc[mg, "grupo"] = novo_grupo
-            p.loc[mp, "grupo"] = novo_grupo
-        else:
-            mg = (g["grupo"] == grupo) & (g["subgrupo"] == subgrupo)
-            mp = (p["grupo"] == grupo) & (p["subgrupo"] == subgrupo)
-            g.loc[mg, ["grupo", "subgrupo"]] = [novo_grupo, novo_subgrupo]
-            p.loc[mp, ["grupo", "subgrupo"]] = [novo_grupo, novo_subgrupo]
-        self.importar({"grupos": g, "produtos": p}, modo="substituir")
+        if novo in set(dados["grupos"]["codigo"]):
+            raise ValueError(f"Já existe um grupo com o código {novo}.")
+        for t, col in (("grupos", "codigo"), ("subgrupos", "grupo_codigo"), ("produtos", "grupo_codigo")):
+            dados[t].loc[dados[t][col] == antigo, col] = novo
+        n = int((dados["produtos"]["grupo_codigo"] == novo).sum())
+        self.importar({t: dados[t] for t in ("grupos", "subgrupos", "produtos")}, modo="substituir")
+        return n
+
+    def alterar_codigo_subgrupo(self, grupo: str, antigo: str, novo: str) -> int:
+        """Troca o código de um subgrupo (dentro do grupo) e nos produtos. Retorna nº de produtos."""
+        dados = self.carregar_tudo()
+        sg, p = dados["subgrupos"], dados["produtos"]
+        if ((sg["grupo_codigo"] == grupo) & (sg["codigo"] == novo)).any():
+            raise ValueError(f"O grupo {grupo} já tem um subgrupo com o código {novo}.")
+        sg.loc[(sg["grupo_codigo"] == grupo) & (sg["codigo"] == antigo), "codigo"] = novo
+        mp = (p["grupo_codigo"] == grupo) & (p["subgrupo_codigo"] == antigo)
+        p.loc[mp, "subgrupo_codigo"] = novo
+        self.importar({"subgrupos": sg, "produtos": p}, modo="substituir")
         return int(mp.sum())
 
     def excluir_tudo(self) -> None:
@@ -147,6 +208,9 @@ class Repositorio:
             for t in ORDEM_TABELAS:
                 con.execute(f'DELETE FROM "{t}"')
             con.execute("DELETE FROM parametros")
+            con.execute("INSERT INTO grupos (codigo, descricao) VALUES (?, ?)", (GRUPO_PADRAO_COD, GRUPO_PADRAO))
+            con.execute("INSERT INTO subgrupos (grupo_codigo, codigo, descricao) VALUES (?, ?, ?)",
+                        (GRUPO_PADRAO_COD, SUBGRUPO_PADRAO_COD, SUBGRUPO_PADRAO))
 
     def _gravar(self, dados: dict[str, pd.DataFrame]) -> None:
         self._exigir_escrita()

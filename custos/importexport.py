@@ -24,7 +24,8 @@ Arquivo = str | Path | BinaryIO
 
 # Colunas do relatório de preços (nome interno -> rótulo exportado)
 COLUNAS_RELATORIO = {
-    "codigo": "Código", "descricao": "Descrição", "grupo": "Grupo", "subgrupo": "Subgrupo", "unidade": "Un.",
+    "codigo": "Código", "descricao": "Descrição", "grupo_codigo": "Cód. grupo", "grupo": "Grupo",
+    "subgrupo_codigo": "Cód. subgrupo", "subgrupo": "Subgrupo", "unidade": "Un.",
     "custo_mp": "Matéria-prima (R$)", "custo_mo": "Mão de obra (R$)",
     "custo_var_unit": "Variáveis unit. (R$)", "custo_direto": "Custo direto (R$)",
     "custo_fixo_unit": "Fixo rateado (R$)", "custo_total": "Custo total (R$)",
@@ -41,7 +42,8 @@ COLUNAS_RELATORIO = {
 }
 
 COLUNAS_GRUPO = {
-    "grupo": "Grupo", "subgrupo": "Subgrupo", "produtos": "Nº produtos", "volume": "Volume mensal",
+    "grupo_codigo": "Cód. grupo", "grupo": "Grupo", "subgrupo_codigo": "Cód. subgrupo",
+    "subgrupo": "Subgrupo", "produtos": "Nº produtos", "volume": "Volume mensal",
     "faturamento": "Faturamento (R$)", "margem_contribuicao": "Margem de contribuição (R$)",
     "lucro": "Lucro (R$)", "mc_pct": "MC %", "margem_liquida_pct": "Margem líquida %",
     "participacao_pct": "Participação no faturamento %",

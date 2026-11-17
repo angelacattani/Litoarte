@@ -94,8 +94,15 @@ class MotorCustos:
         pmo["custo"] = pmo["horas"] * pmo["custo_hora"]
         self.linhas_mo = pmo.drop(columns="codigo")
 
-        prod = self.d["produtos"][["codigo", "descricao", "grupo", "subgrupo", "unidade", "margem_desejada_pct",
-                                   "volume_mensal", "preco_atual"]].copy()
+        prod = self.d["produtos"][["codigo", "descricao", "grupo_codigo", "subgrupo_codigo", "unidade",
+                                   "margem_desejada_pct", "volume_mensal", "preco_atual"]].copy()
+        # descrições de grupo/subgrupo a partir dos códigos
+        prod = prod.merge(self.d["grupos"].rename(columns={"codigo": "grupo_codigo", "descricao": "grupo"}),
+                          on="grupo_codigo", how="left")
+        prod = prod.merge(self.d["subgrupos"].rename(columns={"codigo": "subgrupo_codigo", "descricao": "subgrupo"}),
+                          on=["grupo_codigo", "subgrupo_codigo"], how="left")
+        prod["grupo"] = prod["grupo"].fillna("(grupo " + prod["grupo_codigo"].astype(str) + ")")
+        prod["subgrupo"] = prod["subgrupo"].fillna("(subgrupo " + prod["subgrupo_codigo"].astype(str) + ")")
         prod["custo_mp"] = prod["codigo"].map(self.linhas_mp.groupby("produto_codigo")["custo"].sum()).fillna(0.0)
         prod["custo_mo"] = prod["codigo"].map(self.linhas_mo.groupby("produto_codigo")["custo"].sum()).fillna(0.0)
         prod["horas_mo"] = prod["codigo"].map(self.linhas_mo.groupby("produto_codigo")["horas"].sum()).fillna(0.0)
@@ -240,7 +247,8 @@ class MotorCustos:
             margem_contribuicao=vol * (preco * (1 - self.pct_var / 100) - t["custo_direto"]),
             lucro=vol * (preco - t["custo_total"] - preco * (self.pct_var + self.pct_fix) / 100),
         )
-        chaves = ["grupo"] if nivel == "grupo" else ["grupo", "subgrupo"]
+        chaves = (["grupo_codigo", "grupo"] if nivel == "grupo"
+                  else ["grupo_codigo", "grupo", "subgrupo_codigo", "subgrupo"])
         g = t.groupby(chaves, dropna=False).agg(
             produtos=("codigo", "count"), volume=("volume_mensal", "sum"),
             faturamento=("faturamento", "sum"), margem_contribuicao=("margem_contribuicao", "sum"),

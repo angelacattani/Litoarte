@@ -114,17 +114,30 @@ CUSTOS_VARIAVEIS = Esquema(
     chave=("codigo",),
 )
 
-GRUPO_PADRAO = "Sem grupo"
-SUBGRUPO_PADRAO = "Geral"
+# Grupo/subgrupo padrão para produtos sem classificação
+GRUPO_PADRAO_COD, GRUPO_PADRAO = "00", "Sem grupo"
+SUBGRUPO_PADRAO_COD, SUBGRUPO_PADRAO = "00", "Geral"
 
 GRUPOS = Esquema(
-    "grupos", "Grupos e subgrupos",
+    "grupos", "Grupos",
     (
-        Coluna("grupo", obrigatoria=True),
-        Coluna("subgrupo", obrigatoria=True),
-        Coluna("descricao", descricao="observação opcional sobre o subgrupo"),
+        Coluna("codigo", obrigatoria=True),
+        Coluna("descricao", obrigatoria=True),
     ),
-    chave=("grupo", "subgrupo"),
+    chave=("codigo",),
+)
+
+# O código do subgrupo é único DENTRO do grupo (grupo 01/subgrupo 01,
+# grupo 02/subgrupo 01...). Códigos globalmente únicos também funcionam.
+SUBGRUPOS = Esquema(
+    "subgrupos", "Subgrupos",
+    (
+        Coluna("grupo_codigo", obrigatoria=True),
+        Coluna("codigo", obrigatoria=True),
+        Coluna("descricao", obrigatoria=True),
+    ),
+    chave=("grupo_codigo", "codigo"),
+    referencias={"grupo_codigo": "grupos.codigo"},
 )
 
 PRODUTOS = Esquema(
@@ -132,8 +145,8 @@ PRODUTOS = Esquema(
     (
         Coluna("codigo", obrigatoria=True),
         Coluna("descricao", obrigatoria=True),
-        Coluna("grupo", padrao=GRUPO_PADRAO, descricao="grupo do produto (ex.: Cozinha)"),
-        Coluna("subgrupo", padrao=SUBGRUPO_PADRAO, descricao="subgrupo dentro do grupo (ex.: Armários aéreos)"),
+        Coluna("grupo_codigo", padrao=GRUPO_PADRAO_COD, descricao="código do grupo"),
+        Coluna("subgrupo_codigo", padrao=SUBGRUPO_PADRAO_COD, descricao="código do subgrupo (dentro do grupo)"),
         Coluna("unidade", padrao="un"),
         Coluna("margem_desejada_pct", "real", descricao="vazio = usa a margem padrão dos parâmetros"),
         Coluna("volume_mensal", "real", padrao=0.0, descricao="vendas mensais previstas (unidades)"),
@@ -181,7 +194,7 @@ CONCORRENTES = Esquema(
 ESQUEMAS: dict[str, Esquema] = {
     e.tabela: e
     for e in (MATERIAS_PRIMAS, MAO_DE_OBRA, CUSTOS_FIXOS, CUSTOS_VARIAVEIS,
-              GRUPOS, PRODUTOS, COMPOSICAO, PRODUTO_MAO_DE_OBRA, CONCORRENTES)
+              GRUPOS, SUBGRUPOS, PRODUTOS, COMPOSICAO, PRODUTO_MAO_DE_OBRA, CONCORRENTES)
 }
 
 # Ordem que respeita dependências (pais antes dos filhos) — usada em import.
@@ -218,11 +231,20 @@ ALIASES = {
     "salario": "salario_mensal", "encargos": "encargos_pct", "horas_mes": "horas_produtivas_mes",
     "valor_mes": "valor_mensal", "produto_cod": "produto_codigo", "materia_prima": "mp_codigo",
     "perda": "perda_pct",
-    "grupo_produto": "grupo", "familia": "grupo", "linha": "grupo", "categoria": "grupo",
-    "departamento": "grupo",
-    "sub_grupo": "subgrupo", "subgrupo_produto": "subgrupo", "subcategoria": "subgrupo",
-    "sub_categoria": "subgrupo", "subfamilia": "subgrupo", "sub_familia": "subgrupo",
+    "cod_grupo": "grupo_codigo", "codigo_grupo": "grupo_codigo", "grupo_cod": "grupo_codigo",
+    "cd_grupo": "grupo_codigo", "id_grupo": "grupo_codigo",
+    "cod_subgrupo": "subgrupo_codigo", "codigo_subgrupo": "subgrupo_codigo", "subgrupo_cod": "subgrupo_codigo",
+    "cd_subgrupo": "subgrupo_codigo", "id_subgrupo": "subgrupo_codigo",
+    "cod_sub_grupo": "subgrupo_codigo", "codigo_sub_grupo": "subgrupo_codigo",
 }
+
+
+# Colunas com o NOME (descrição) do grupo/subgrupo numa planilha de produtos.
+# Não são gravadas no produto: servem para localizar (ou criar) o código.
+NOMES_GRUPO = {"grupo", "grupo_produto", "nome_grupo", "descricao_grupo", "grupo_descricao",
+               "familia", "linha", "categoria", "departamento"}
+NOMES_SUBGRUPO = {"subgrupo", "sub_grupo", "subgrupo_produto", "nome_subgrupo", "descricao_subgrupo",
+                  "subgrupo_descricao", "subcategoria", "sub_categoria", "subfamilia", "sub_familia"}
 
 
 def normalizar_nome(nome: object) -> str:

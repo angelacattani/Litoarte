@@ -31,14 +31,20 @@ def dados_exemplo() -> tuple[dict[str, pd.DataFrame], dict]:
             {"codigo": "CV04", "descricao": "Frete médio por unidade", "tipo": "unitario", "valor": 15.0},
         ]),
         "grupos": df([
-            {"grupo": "Cozinha", "subgrupo": "Armários", "descricao": "Módulos aéreos e de chão"},
-            {"grupo": "Escritório", "subgrupo": "Gaveteiros", "descricao": None},
-            {"grupo": "Decoração", "subgrupo": "Nichos e prateleiras", "descricao": None},
+            {"codigo": "01", "descricao": "Cozinha"},
+            {"codigo": "02", "descricao": "Escritório"},
+            {"codigo": "03", "descricao": "Decoração"},
+        ]),
+        "subgrupos": df([
+            {"grupo_codigo": "01", "codigo": "01", "descricao": "Armários aéreos"},
+            {"grupo_codigo": "01", "codigo": "02", "descricao": "Balcões"},
+            {"grupo_codigo": "02", "codigo": "01", "descricao": "Gaveteiros"},
+            {"grupo_codigo": "03", "codigo": "01", "descricao": "Nichos e prateleiras"},
         ]),
         "produtos": df([
-            {"codigo": "P001", "descricao": "Armário aéreo 80cm", "grupo": "Cozinha", "subgrupo": "Armários", "unidade": "un", "margem_desejada_pct": 15.0, "volume_mensal": 60, "preco_atual": 520.0},
-            {"codigo": "P002", "descricao": "Gaveteiro 3 gavetas", "grupo": "Escritório", "subgrupo": "Gaveteiros", "unidade": "un", "margem_desejada_pct": None, "volume_mensal": 40, "preco_atual": 450.0},
-            {"codigo": "P003", "descricao": "Nicho decorativo", "grupo": "Decoração", "subgrupo": "Nichos e prateleiras", "unidade": "un", "margem_desejada_pct": 25.0, "volume_mensal": 120, "preco_atual": 95.0},
+            {"codigo": "P001", "descricao": "Armário aéreo 80cm", "grupo_codigo": "01", "subgrupo_codigo": "01", "unidade": "un", "margem_desejada_pct": 15.0, "volume_mensal": 60, "preco_atual": 520.0},
+            {"codigo": "P002", "descricao": "Gaveteiro 3 gavetas", "grupo_codigo": "02", "subgrupo_codigo": "01", "unidade": "un", "margem_desejada_pct": None, "volume_mensal": 40, "preco_atual": 450.0},
+            {"codigo": "P003", "descricao": "Nicho decorativo", "grupo_codigo": "03", "subgrupo_codigo": "01", "unidade": "un", "margem_desejada_pct": 25.0, "volume_mensal": 120, "preco_atual": 95.0},
         ]),
         "composicao": df([
             {"produto_codigo": "P001", "mp_codigo": "MP01", "quantidade": 2.4, "perda_pct": 12.0},

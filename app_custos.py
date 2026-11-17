@@ -17,7 +17,7 @@ import streamlit as st
 from custos import ESQUEMAS, METODOS_RATEIO, ORDEM_TABELAS, MotorCustos, Repositorio
 from custos import configuracao as cfg
 from custos.calculo import brl
-from custos.modelos import GRUPO_PADRAO, SUBGRUPO_PADRAO
+from custos.modelos import GRUPO_PADRAO_COD, SUBGRUPO_PADRAO_COD
 from custos.repositorio import SomenteLeitura
 from custos.trava import TravaEdicao
 from custos.exemplo import dados_exemplo
@@ -139,39 +139,56 @@ def editor_tabela(tabela: str, ajuda: str = "", opcoes: dict | None = None) -> N
 SEP = " › "
 
 
+def rotulos_grupos() -> tuple[dict[str, str], dict[tuple[str, str], str]]:
+    """{cod_grupo: '01 - Cozinha'}, {(cod_grupo, cod_sub): '01 - Cozinha › 02 - Balcões'}"""
+    g = repo.carregar("grupos")
+    sg = repo.carregar("subgrupos")
+    rg = dict(zip(g["codigo"], g["codigo"] + " - " + g["descricao"]))
+    rs = {(a, c): f"{rg.get(a, a)}{SEP}{c} - {d}"
+          for a, c, d in zip(sg["grupo_codigo"], sg["codigo"], sg["descricao"])}
+    return rg, rs
+
+
 def pagina_produtos() -> None:
     st.header("Produtos")
-    st.caption("Cada produto pertence a um grupo e subgrupo (cadastre-os em **🗂 Grupos e subgrupos**). "
-               "Margem vazia = margem padrão. Volume mensal é usado em rateios, ocupação de MO e projeções.")
+    st.caption("Cada produto é vinculado a um grupo e subgrupo pelos **códigos** (cadastre-os em "
+               "**🗂 Grupos e subgrupos**). Margem vazia = margem padrão. Volume mensal é usado em rateios, "
+               "ocupação de MO e projeções.")
     tudo = repo.carregar("produtos")
-    grupos = repo.carregar("grupos")
-    opcoes = sorted(set(grupos["grupo"] + SEP + grupos["subgrupo"]) | {GRUPO_PADRAO + SEP + SUBGRUPO_PADRAO})
+    rg, rs = rotulos_grupos()
+    por_rotulo = {v: k for k, v in rs.items()}
 
     c1, c2 = st.columns(2)
-    filtro_g = c1.selectbox("Filtrar por grupo", ["(todos)"] + sorted(grupos["grupo"].unique()), key="fg_prod")
-    subs = grupos.loc[grupos["grupo"] == filtro_g, "subgrupo"].tolist() if filtro_g != "(todos)" else []
-    filtro_s = c2.selectbox("Subgrupo", ["(todos)"] + sorted(subs), key="fs_prod", disabled=not subs)
+    filtro_g = c1.selectbox("Filtrar por grupo", [None] + list(rg), format_func=lambda c: rg.get(c, "(todos)"),
+                            key="fg_prod")
+    subs = [k for k in rs if k[0] == filtro_g]
+    filtro_s = c2.selectbox("Subgrupo", [None] + subs, format_func=lambda k: rs[k].split(SEP)[1] if k else "(todos)",
+                            key="fs_prod", disabled=not subs)
     vis = tudo
-    if filtro_g != "(todos)":
-        vis = vis[vis["grupo"] == filtro_g]
-        if filtro_s != "(todos)":
-            vis = vis[vis["subgrupo"] == filtro_s]
+    if filtro_g:
+        vis = vis[vis["grupo_codigo"] == filtro_g]
+        if filtro_s:
+            vis = vis[vis["subgrupo_codigo"] == filtro_s[1]]
 
-    vis = vis.assign(grupo_subgrupo=vis["grupo"] + SEP + vis["subgrupo"]).drop(columns=["grupo", "subgrupo"])
+    chave = list(zip(vis["grupo_codigo"], vis["subgrupo_codigo"]))
+    vis = vis.assign(grupo_subgrupo=[rs.get(k, f"{k[0]}{SEP}{k[1]} (não cadastrado)") for k in chave])
+    vis = vis.drop(columns=["grupo_codigo", "subgrupo_codigo"])
     cols = ["codigo", "descricao", "grupo_subgrupo"] + [c for c in vis.columns
                                                        if c not in ("codigo", "descricao", "grupo_subgrupo")]
-    cfg_cols = {k: v for k, v in config_colunas("produtos").items() if k not in ("grupo", "subgrupo")}
+    cfg_cols = {k: v for k, v in config_colunas("produtos").items() if k not in ("grupo_codigo", "subgrupo_codigo")}
     cfg_cols["grupo_subgrupo"] = st.column_config.SelectboxColumn(
-        "Grupo › Subgrupo *", options=opcoes, required=True,
-        default=(filtro_g + SEP + filtro_s) if filtro_s not in ("(todos)", None) else None)
+        "Grupo › Subgrupo *", options=sorted(rs.values()), required=True,
+        default=rs.get(filtro_s) if filtro_s else None,
+        help="Códigos e descrições; o produto guarda apenas os códigos.")
     st.caption(f"{len(vis)} de {len(tudo)} produto(s)")
     ed = st.data_editor(vis[cols], num_rows="dynamic", width="stretch", hide_index=True,
                         column_config=cfg_cols, key=f"ed_produtos_{filtro_g}_{filtro_s}")
     b1, b2, _ = st.columns([1, 1, 4])
     if b1.button("💾 Salvar", key="salvar_produtos", type="primary", disabled=not EDITA):
         ed = ed.copy()
-        par = ed["grupo_subgrupo"].fillna(GRUPO_PADRAO + SEP + SUBGRUPO_PADRAO).str.split(SEP, n=1, expand=True)
-        ed["grupo"], ed["subgrupo"] = par[0], par[1] if par.shape[1] > 1 else SUBGRUPO_PADRAO
+        pares = [por_rotulo.get(r, (GRUPO_PADRAO_COD, SUBGRUPO_PADRAO_COD)) for r in ed["grupo_subgrupo"]]
+        ed["grupo_codigo"] = [p[0] for p in pares]
+        ed["subgrupo_codigo"] = [p[1] for p in pares]
         ed = ed.drop(columns="grupo_subgrupo")
         novo = pd.concat([tudo[~tudo["codigo"].isin(vis["codigo"])], ed], ignore_index=True)
         mostrar_avisos(repo.salvar("produtos", novo))
@@ -180,37 +197,63 @@ def pagina_produtos() -> None:
 
 def pagina_grupos() -> None:
     st.header("Grupos e subgrupos")
-    st.caption("Uma linha por combinação grupo/subgrupo. Grupos usados por produtos não podem ser "
-               "excluídos (voltam automaticamente ao salvar); para mudar o nome, use **Renomear** abaixo.")
+    st.caption("O produto se vincula pelos códigos: alterar a **descrição** não afeta os produtos. "
+               "O código do subgrupo é único dentro do seu grupo. Grupos/subgrupos em uso por produtos "
+               "não podem ser excluídos.")
+    prod = repo.carregar("produtos")
     grupos = repo.carregar("grupos")
-    uso = repo.carregar("produtos").groupby(["grupo", "subgrupo"]).size().rename("produtos")
-    vis = grupos.merge(uso, left_on=["grupo", "subgrupo"], right_index=True, how="left")
-    vis["produtos"] = vis["produtos"].fillna(0).astype(int)
-    cfg_cols = config_colunas("grupos")
-    cfg_cols["produtos"] = st.column_config.NumberColumn("Nº produtos", disabled=True)
-    ed = st.data_editor(vis, num_rows="dynamic", width="stretch", hide_index=True,
-                        column_config=cfg_cols, key="ed_grupos")
-    if st.button("💾 Salvar", key="salvar_grupos", type="primary", disabled=not EDITA):
-        mostrar_avisos(repo.salvar("grupos", ed.drop(columns="produtos")))
+    sub = repo.carregar("subgrupos")
 
-    st.subheader("Renomear")
-    if grupos.empty:
-        return
-    c1, c2 = st.columns(2)
-    alvo = c1.radio("O que renomear", ["Grupo", "Subgrupo"], horizontal=True)
-    g = c1.selectbox("Grupo", sorted(grupos["grupo"].unique()), key="ren_g")
+    st.subheader("Grupos")
+    vg = grupos.assign(produtos=grupos["codigo"].map(prod.groupby("grupo_codigo").size()).fillna(0).astype(int),
+                       subgrupos=grupos["codigo"].map(sub.groupby("grupo_codigo").size()).fillna(0).astype(int))
+    cfg_g = config_colunas("grupos")
+    cfg_g["codigo"] = st.column_config.TextColumn("Código *", required=True,
+                                                  help="Para trocar o código de um grupo existente use 'Alterar código'.")
+    cfg_g |= {"produtos": st.column_config.NumberColumn("Nº produtos", disabled=True),
+              "subgrupos": st.column_config.NumberColumn("Nº subgrupos", disabled=True)}
+    ed_g = st.data_editor(vg, num_rows="dynamic", width="stretch", hide_index=True, column_config=cfg_g,
+                          key="ed_grupos")
+    if st.button("💾 Salvar grupos", type="primary", disabled=not EDITA):
+        mostrar_avisos(repo.salvar("grupos", ed_g.drop(columns=["produtos", "subgrupos"])))
+
+    st.subheader("Subgrupos")
+    rg = dict(zip(grupos["codigo"], grupos["codigo"] + " - " + grupos["descricao"]))
+    filtro = st.selectbox("Grupo", [None] + list(rg), format_func=lambda c: rg.get(c, "(todos)"), key="fg_sub")
+    vs = sub if filtro is None else sub[sub["grupo_codigo"] == filtro]
+    uso = prod.groupby(["grupo_codigo", "subgrupo_codigo"]).size()
+    vs = vs.assign(produtos=[int(uso.get((a, c), 0)) for a, c in zip(vs["grupo_codigo"], vs["codigo"])])
+    cfg_s = config_colunas("subgrupos", {"grupo_codigo": list(rg)})
+    cfg_s["grupo_codigo"] = st.column_config.SelectboxColumn("Grupo *", options=list(rg), required=True,
+                                                             default=filtro)
+    cfg_s["produtos"] = st.column_config.NumberColumn("Nº produtos", disabled=True)
+    ed_s = st.data_editor(vs, num_rows="dynamic", width="stretch", hide_index=True, column_config=cfg_s,
+                          key=f"ed_sub_{filtro}")
+    st.caption("Grupos: " + " · ".join(rg.values()))
+    if st.button("💾 Salvar subgrupos", type="primary", disabled=not EDITA):
+        novo = pd.concat([sub[~sub.set_index(["grupo_codigo", "codigo"]).index.isin(
+            vs.set_index(["grupo_codigo", "codigo"]).index)], ed_s.drop(columns="produtos")], ignore_index=True)
+        mostrar_avisos(repo.salvar("subgrupos", novo))
+
+    st.subheader("Alterar código")
+    st.caption("Troca o código e atualiza automaticamente subgrupos e produtos vinculados.")
+    c1, c2, c3 = st.columns(3)
+    alvo = c1.radio("Alterar código de", ["Grupo", "Subgrupo"], key="alt_alvo")
+    g = c2.selectbox("Grupo", [c for c in rg if c != GRUPO_PADRAO_COD or alvo == "Subgrupo"],
+                     format_func=rg.get, key="alt_g")
+    sgs = sub[sub["grupo_codigo"] == g]
     sg = None
     if alvo == "Subgrupo":
-        sg = c1.selectbox("Subgrupo", sorted(grupos.loc[grupos["grupo"] == g, "subgrupo"]), key="ren_s")
-    novo = c2.text_input("Novo nome", key="ren_novo")
-    c2.caption("Se o novo nome já existir, os dois são unificados.")
-    if c2.button("Renomear", disabled=not (EDITA and novo.strip())):
-        if alvo == "Grupo":
-            n = repo.renomear_grupo(g, novo.strip())
-        else:
-            n = repo.renomear_grupo(g, g, sg, novo.strip())
-        st.success(f"Renomeado. {n} produto(s) atualizado(s).")
-        st.rerun()
+        rs = dict(zip(sgs["codigo"], sgs["codigo"] + " - " + sgs["descricao"]))
+        sg = c2.selectbox("Subgrupo", list(rs), format_func=rs.get, key="alt_s")
+    novo_cod = c3.text_input("Novo código", key="alt_novo").strip()
+    if c3.button("Alterar", disabled=not (EDITA and novo_cod and (alvo == "Grupo" or sg))):
+        try:
+            n = (repo.alterar_codigo_grupo(g, novo_cod) if alvo == "Grupo"
+                 else repo.alterar_codigo_subgrupo(g, sg, novo_cod))
+            st.success(f"Código alterado. {n} produto(s) atualizado(s).")
+        except ValueError as e:
+            st.error(str(e))
 
 
 # --------------------------------------------------------------------- páginas
@@ -245,14 +288,15 @@ def pagina_painel() -> None:
              for c in ["mc_pct", "margem_liquida_pct", "participacao_pct"]}
     st.dataframe(rg, hide_index=True, width="stretch",
                  column_config={**moeda_g, **pct_g, "grupo": "Grupo", "subgrupo": "Subgrupo",
+                                "grupo_codigo": "Cód. grupo", "subgrupo_codigo": "Cód. subgrupo",
                                 "produtos": "Nº produtos", "volume": "Volume mensal"})
     st.caption("Lucro por grupo não inclui a ociosidade de mão de obra, que aparece só no total da empresa.")
 
     st.subheader("Formação de preço por produto")
-    grupos_disp = sorted(tab["grupo"].dropna().unique())
-    sel = st.multiselect("Filtrar grupos", grupos_disp, placeholder="todos os grupos")
+    rot = dict(zip(tab["grupo_codigo"], tab["grupo_codigo"] + " - " + tab["grupo"]))
+    sel = st.multiselect("Filtrar grupos", sorted(rot), format_func=rot.get, placeholder="todos os grupos")
     if sel:
-        tab = tab[tab["grupo"].isin(sel)]
+        tab = tab[tab["grupo_codigo"].isin(sel)]
     st.caption(f"Variáveis: {pct(m.pct_var)} do preço + {brl(m.var_unit)}/un · "
                f"Fixos: {METODOS_RATEIO[m.p['metodo_rateio']]}"
                + (f" = {pct(m.pct_fix)}" if m.pct_fix else (f" = {brl(m.taxa_rateio)}" if m.taxa_rateio else "")))

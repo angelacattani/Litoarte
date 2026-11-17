@@ -13,7 +13,7 @@ import re
 import numpy as np
 import pandas as pd
 
-from .modelos import ESQUEMAS, Esquema, normalizar_colunas
+from .modelos import ESQUEMAS, Esquema, normalizar_colunas, normalizar_nome
 
 _NUM_BR = re.compile(r"^-?[\d.]*,\d+$")  # 1.234,56
 
@@ -77,6 +77,8 @@ def validar(df: pd.DataFrame, esquema: Esquema | str) -> tuple[pd.DataFrame, lis
             datas = pd.to_datetime(col, errors="coerce", dayfirst=True)
             df[c.nome] = datas.dt.strftime("%Y-%m-%d").where(datas.notna(), None)
         else:
+            # códigos numéricos lidos do Excel como 1001.0 -> "1001"
+            col = col.map(lambda v: str(int(v)) if isinstance(v, float) and v.is_integer() else v)
             txt = col.astype("string").str.strip()
             txt = txt.mask(txt.isin(["", "nan", "None", "<NA>"]))
             if c.padrao is not None:
@@ -134,49 +136,165 @@ def _linha(idx: object) -> str:
     return str(idx + 2) if isinstance(idx, (int, np.integer)) else str(idx)
 
 
-def _chave_nome(valor: object) -> str:
-    """Comparação tolerante: ignora maiúsculas/minúsculas e espaços extras."""
+
+# --------------------------------------------------------------------------
+# Grupos e subgrupos
+# --------------------------------------------------------------------------
+def _k(valor: object) -> str:
+    """Comparação tolerante de nomes: ignora maiúsculas/minúsculas e espaços extras."""
     return " ".join(str(valor).split()).casefold()
 
 
-def sincronizar_grupos(dados: dict[str, pd.DataFrame]) -> tuple[dict[str, pd.DataFrame], list[str]]:
-    """Mantém produtos e cadastro de grupos coerentes.
+def _limpo(valor: object) -> str | None:
+    if valor is None or (isinstance(valor, float) and np.isnan(valor)):
+        return None
+    if isinstance(valor, float) and valor.is_integer():
+        valor = int(valor)
+    s = " ".join(str(valor).split())
+    return s or None
 
-    - Grafias equivalentes ('cozinha', ' Cozinha ') são unificadas na grafia
-      já cadastrada (ou na primeira encontrada).
-    - Toda combinação grupo/subgrupo usada por um produto passa a existir no
-      cadastro de grupos (nunca se descarta produto por grupo inexistente).
+
+def proximo_codigo(existentes) -> str:
+    """Próximo código numérico livre, com zeros à esquerda (mín. 2 dígitos)."""
+    nums = [c for c in map(str, existentes) if c.isdigit()]
+    largura = max([2] + [len(c) for c in nums])
+    return str(max([0] + [int(c) for c in nums]) + 1).zfill(largura)
+
+
+def resolver_grupos_produtos(bruto: pd.DataFrame, grupos: pd.DataFrame, subgrupos: pd.DataFrame
+                             ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]]:
+    """Preenche grupo_codigo/subgrupo_codigo de uma planilha de produtos.
+
+    Aceita planilhas com códigos, só com nomes (Grupo, Família, Subcategoria...)
+    ou com ambos. Regras:
+      - código informado e existente: usado (o nome é ignorado);
+      - código informado e inexistente: grupo/subgrupo criado com esse código
+        e o nome da planilha (ou 'Grupo <código>');
+      - só o nome: procura pela descrição cadastrada (sem diferenciar
+        maiúsculas/espaços) ou por um código igual ao texto; se não achar,
+        cria com o próximo código livre;
+      - nada informado: grupo 00 'Sem grupo' / subgrupo 00 'Geral'.
+    Retorna (produtos, grupos, subgrupos, avisos).
     """
-    from .modelos import GRUPOS  # import local evita ciclo
+    from .modelos import (GRUPO_PADRAO, GRUPO_PADRAO_COD, NOMES_GRUPO, NOMES_SUBGRUPO, PRODUTOS,
+                          SUBGRUPO_PADRAO, SUBGRUPO_PADRAO_COD)
 
+    ren = {}
+    for col in bruto.columns:
+        n = normalizar_nome(col)
+        if n in NOMES_GRUPO:
+            ren[col] = "_grupo_nome"
+        elif n in NOMES_SUBGRUPO:
+            ren[col] = "_subgrupo_nome"
+    df = normalizar_colunas(bruto.rename(columns=ren), PRODUTOS)
+
+    g_desc = dict(zip(grupos["codigo"].astype(str), grupos["descricao"]))
+    s_desc = {(str(a), str(b)): d for a, b, d in zip(subgrupos["grupo_codigo"], subgrupos["codigo"],
+                                                   subgrupos["descricao"])}
+    criados_g, criados_s = [], []
+
+    def criar_g(cod, nome):
+        g_desc[cod] = nome
+        criados_g.append(f"{cod} {nome}")
+
+    def criar_s(gc, cod, nome):
+        s_desc[(gc, cod)] = nome
+        criados_s.append(f"{gc}/{cod} {nome}")
+
+    def equivalente(cod, existentes):
+        """'1' casa com '01' (o Excel remove zeros à esquerda de códigos numéricos)."""
+        if cod in existentes or not cod.isdigit():
+            return cod
+        return next((c for c in existentes if c.isdigit() and int(c) == int(cod)), cod)
+
+    def grupo(cod, nome):
+        if cod:
+            cod = equivalente(cod, g_desc)
+            if cod not in g_desc:
+                criar_g(cod, nome or f"Grupo {cod}")
+            return cod
+        if nome:
+            achado = next((c for c, d in g_desc.items() if _k(d) == _k(nome)), None)
+            if achado is None and nome in g_desc:
+                achado = nome
+            if achado is None:
+                achado = proximo_codigo(g_desc)
+                criar_g(achado, nome)
+            return achado
+        if GRUPO_PADRAO_COD not in g_desc:
+            criar_g(GRUPO_PADRAO_COD, GRUPO_PADRAO)
+        return GRUPO_PADRAO_COD
+
+    def subgrupo(gc, cod, nome):
+        do_grupo = {c: d for (g, c), d in s_desc.items() if g == gc}
+        if cod:
+            cod = equivalente(cod, do_grupo)
+            if cod not in do_grupo:
+                criar_s(gc, cod, nome or f"Subgrupo {cod}")
+            return cod
+        if nome:
+            achado = next((c for c, d in do_grupo.items() if _k(d) == _k(nome)), None)
+            if achado is None and nome in do_grupo:
+                achado = nome
+            if achado is None:
+                achado = proximo_codigo(do_grupo)
+                criar_s(gc, achado, nome)
+            return achado
+        if SUBGRUPO_PADRAO_COD not in do_grupo:
+            criar_s(gc, SUBGRUPO_PADRAO_COD, SUBGRUPO_PADRAO)
+        return SUBGRUPO_PADRAO_COD
+
+    gcods, scods = [], []
+    for _, r in df.iterrows():
+        if all(_limpo(r.get(c)) is None for c in ("codigo", "descricao")):
+            gcods.append(None)
+            scods.append(None)
+            continue
+        gc = grupo(_limpo(r.get("grupo_codigo")), _limpo(r.get("_grupo_nome")))
+        gcods.append(gc)
+        scods.append(subgrupo(gc, _limpo(r.get("subgrupo_codigo")), _limpo(r.get("_subgrupo_nome"))))
+    df["grupo_codigo"], df["subgrupo_codigo"] = gcods, scods
+    df = df.drop(columns=[c for c in ("_grupo_nome", "_subgrupo_nome") if c in df.columns])
+
+    avisos = []
+    if criados_g:
+        avisos.append("Grupos criados: " + "; ".join(criados_g))
+    if criados_s:
+        avisos.append("Subgrupos criados (grupo/subgrupo): " + "; ".join(criados_s))
+    novos_g = pd.DataFrame({"codigo": list(g_desc), "descricao": list(g_desc.values())})
+    novos_s = pd.DataFrame([{"grupo_codigo": g, "codigo": c, "descricao": d} for (g, c), d in s_desc.items()],
+                           columns=["grupo_codigo", "codigo", "descricao"])
+    return df, novos_g, novos_s, avisos
+
+
+def proteger_grupos_em_uso(dados: dict[str, pd.DataFrame], antes: dict[str, pd.DataFrame]
+                           ) -> tuple[dict[str, pd.DataFrame], list[str]]:
+    """Grupo/subgrupo usado por produto não pode sumir: é restaurado (com a
+    descrição anterior) ou, se nunca existiu, criado com nome provisório."""
     avisos: list[str] = []
-    grupos = dados.get("grupos", GRUPOS.vazio()).copy()
-    prod = dados.get("produtos", ESQUEMAS["produtos"].vazio()).copy()
-
-    canon_g: dict[str, str] = {}
-    canon_s: dict[tuple[str, str], str] = {}
-
-    def canonizar(g: str, sg: str) -> tuple[str, str]:
-        g = canon_g.setdefault(_chave_nome(g), " ".join(str(g).split()))
-        sg = canon_s.setdefault((_chave_nome(g), _chave_nome(sg)), " ".join(str(sg).split()))
-        return g, sg
-
-    if not grupos.empty:
-        pares = [canonizar(g, sg) for g, sg in zip(grupos["grupo"], grupos["subgrupo"])]
-        grupos[["grupo", "subgrupo"]] = pares
-        grupos = grupos.drop_duplicates(subset=["grupo", "subgrupo"], keep="first")
-
-    if not prod.empty:
-        pares = [canonizar(g, sg) for g, sg in zip(prod["grupo"], prod["subgrupo"])]
-        prod[["grupo", "subgrupo"]] = pares
-        existentes = set(zip(grupos["grupo"], grupos["subgrupo"]))
-        novos = sorted({p for p in pares if p not in existentes})
-        if novos:
-            grupos = pd.concat([grupos, pd.DataFrame(novos, columns=["grupo", "subgrupo"])], ignore_index=True)
-            avisos.append("Grupos/subgrupos incluídos no cadastro por estarem em uso nos produtos: "
-                          + "; ".join(f"{g} › {sg}" for g, sg in novos))
-
+    g, sg, p = dados["grupos"].copy(), dados["subgrupos"].copy(), dados["produtos"]
+    if p.empty:
+        return dados, avisos
+    uso_g = p.groupby("grupo_codigo").size()
+    faltam = [c for c in uso_g.index if c not in set(g["codigo"])]
+    if faltam:
+        ant = antes["grupos"].set_index("codigo")["descricao"]
+        g = pd.concat([g, pd.DataFrame({"codigo": faltam,
+                                        "descricao": [ant.get(c, f"Grupo {c}") for c in faltam]})],
+                      ignore_index=True)
+        avisos.append("Grupos mantidos por estarem em uso: "
+                      + "; ".join(f"{c} ({uso_g[c]} produto(s))" for c in faltam))
+    uso_s = p.groupby(["grupo_codigo", "subgrupo_codigo"]).size()
+    atuais = set(zip(sg["grupo_codigo"], sg["codigo"]))
+    faltam_s = [k for k in uso_s.index if k not in atuais]
+    if faltam_s:
+        ant = {(a, b): d for a, b, d in zip(antes["subgrupos"]["grupo_codigo"], antes["subgrupos"]["codigo"],
+                                            antes["subgrupos"]["descricao"])}
+        sg = pd.concat([sg, pd.DataFrame([{"grupo_codigo": a, "codigo": b,
+                                           "descricao": ant.get((a, b), f"Subgrupo {b}")} for a, b in faltam_s])],
+                       ignore_index=True)
+        avisos.append("Subgrupos mantidos por estarem em uso: "
+                      + "; ".join(f"{a}/{b} ({uso_s[(a, b)]} produto(s))" for a, b in faltam_s))
     saida = dict(dados)
-    saida["grupos"] = grupos.sort_values(["grupo", "subgrupo"]).reset_index(drop=True)
-    saida["produtos"] = prod
+    saida["grupos"], saida["subgrupos"] = g, sg
     return saida, avisos
