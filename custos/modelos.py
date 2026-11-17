@@ -31,6 +31,10 @@ class Coluna:
     minimo: float | None = 0.0   # só para numéricos; None = sem limite
     descricao: str = ""
 
+    @property
+    def sql(self) -> str:
+        return _SQL[self.tipo]
+
 
 @dataclass(frozen=True)
 class Esquema:
@@ -48,7 +52,7 @@ class Esquema:
         return next(c for c in self.colunas if c.nome == nome)
 
     def ddl(self) -> str:
-        cols = ", ".join(f'"{c.nome}" {_SQL[c.tipo]}' for c in self.colunas)
+        cols = ", ".join(f'"{c.nome}" {c.sql}' for c in self.colunas)
         pk = ", ".join(f'"{k}"' for k in self.chave)
         return f'CREATE TABLE IF NOT EXISTS "{self.tabela}" ({cols}, PRIMARY KEY ({pk}))'
 
@@ -110,11 +114,26 @@ CUSTOS_VARIAVEIS = Esquema(
     chave=("codigo",),
 )
 
+GRUPO_PADRAO = "Sem grupo"
+SUBGRUPO_PADRAO = "Geral"
+
+GRUPOS = Esquema(
+    "grupos", "Grupos e subgrupos",
+    (
+        Coluna("grupo", obrigatoria=True),
+        Coluna("subgrupo", obrigatoria=True),
+        Coluna("descricao", descricao="observação opcional sobre o subgrupo"),
+    ),
+    chave=("grupo", "subgrupo"),
+)
+
 PRODUTOS = Esquema(
     "produtos", "Produtos",
     (
         Coluna("codigo", obrigatoria=True),
         Coluna("descricao", obrigatoria=True),
+        Coluna("grupo", padrao=GRUPO_PADRAO, descricao="grupo do produto (ex.: Cozinha)"),
+        Coluna("subgrupo", padrao=SUBGRUPO_PADRAO, descricao="subgrupo dentro do grupo (ex.: Armários aéreos)"),
         Coluna("unidade", padrao="un"),
         Coluna("margem_desejada_pct", "real", descricao="vazio = usa a margem padrão dos parâmetros"),
         Coluna("volume_mensal", "real", padrao=0.0, descricao="vendas mensais previstas (unidades)"),
@@ -162,7 +181,7 @@ CONCORRENTES = Esquema(
 ESQUEMAS: dict[str, Esquema] = {
     e.tabela: e
     for e in (MATERIAS_PRIMAS, MAO_DE_OBRA, CUSTOS_FIXOS, CUSTOS_VARIAVEIS,
-              PRODUTOS, COMPOSICAO, PRODUTO_MAO_DE_OBRA, CONCORRENTES)
+              GRUPOS, PRODUTOS, COMPOSICAO, PRODUTO_MAO_DE_OBRA, CONCORRENTES)
 }
 
 # Ordem que respeita dependências (pais antes dos filhos) — usada em import.
@@ -199,6 +218,10 @@ ALIASES = {
     "salario": "salario_mensal", "encargos": "encargos_pct", "horas_mes": "horas_produtivas_mes",
     "valor_mes": "valor_mensal", "produto_cod": "produto_codigo", "materia_prima": "mp_codigo",
     "perda": "perda_pct",
+    "grupo_produto": "grupo", "familia": "grupo", "linha": "grupo", "categoria": "grupo",
+    "departamento": "grupo",
+    "sub_grupo": "subgrupo", "subgrupo_produto": "subgrupo", "subcategoria": "subgrupo",
+    "sub_categoria": "subgrupo", "subfamilia": "subgrupo", "sub_familia": "subgrupo",
 }
 
 

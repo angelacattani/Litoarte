@@ -18,7 +18,7 @@ import pandas as pd
 
 from .modelos import ESQUEMAS, ORDEM_TABELAS, PARAMETROS_PADRAO
 from .trava import TravaEdicao
-from .validacao import checar_referencias, validar
+from .validacao import checar_referencias, sincronizar_grupos, validar
 
 
 class SomenteLeitura(PermissionError):
@@ -40,6 +40,11 @@ class Repositorio:
             con.execute("PRAGMA journal_mode=DELETE")
             for esq in ESQUEMAS.values():
                 con.execute(esq.ddl())
+                # migração: bancos criados por versões anteriores ganham as colunas novas
+                existentes = {r[1] for r in con.execute(f'PRAGMA table_info("{esq.tabela}")')}
+                for c in esq.colunas:
+                    if c.nome not in existentes:
+                        con.execute(f'ALTER TABLE "{esq.tabela}" ADD COLUMN "{c.nome}" {c.sql}')
             con.execute('CREATE TABLE IF NOT EXISTS parametros (chave TEXT PRIMARY KEY, valor TEXT)')
 
     @property
@@ -81,12 +86,7 @@ class Repositorio:
     # ------------------------------------------------------------------ escrita
     def salvar(self, tabela: str, df: pd.DataFrame) -> list[str]:
         """Substitui o conteúdo da tabela. Retorna avisos de validação."""
-        df, erros = validar(df, tabela)
-        dados = self.carregar_tudo()
-        dados[tabela] = df
-        dados, erros_ref = checar_referencias(dados)
-        self._gravar({tabela: dados[tabela]})
-        return erros + erros_ref
+        return self.importar({tabela: df}, modo="substituir")
 
     def mesclar(self, tabela: str, df: pd.DataFrame) -> list[str]:
         """Insere ou atualiza registros pela chave primária (upsert)."""
@@ -113,10 +113,33 @@ class Repositorio:
                 df = pd.concat([base[~base.index.isin(df.set_index(chave).index)].reset_index(), df],
                                ignore_index=True)
             dados[tabela] = df
+        dados, e = sincronizar_grupos(dados)
+        erros += e
         dados, e = checar_referencias(dados)
         erros += e
         self._gravar(dados)
         return erros
+
+    def renomear_grupo(self, grupo: str, novo_grupo: str, subgrupo: str | None = None,
+                       novo_subgrupo: str | None = None) -> int:
+        """Renomeia um grupo (ou um subgrupo dele) no cadastro e em todos os produtos.
+
+        Retorna o nº de produtos alterados. Renomear para um nome já existente
+        funde os dois grupos/subgrupos.
+        """
+        dados = self.carregar_tudo()
+        g, p = dados["grupos"], dados["produtos"]
+        if subgrupo is None:
+            mg, mp = g["grupo"] == grupo, p["grupo"] == grupo
+            g.loc[mg, "grupo"] = novo_grupo
+            p.loc[mp, "grupo"] = novo_grupo
+        else:
+            mg = (g["grupo"] == grupo) & (g["subgrupo"] == subgrupo)
+            mp = (p["grupo"] == grupo) & (p["subgrupo"] == subgrupo)
+            g.loc[mg, ["grupo", "subgrupo"]] = [novo_grupo, novo_subgrupo]
+            p.loc[mp, ["grupo", "subgrupo"]] = [novo_grupo, novo_subgrupo]
+        self.importar({"grupos": g, "produtos": p}, modo="substituir")
+        return int(mp.sum())
 
     def excluir_tudo(self) -> None:
         self._exigir_escrita()
@@ -134,8 +157,9 @@ class Repositorio:
                 if df.empty:
                     continue
                 linhas = df[esq.nomes].astype(object).where(df[esq.nomes].notna(), None).values.tolist()
+                cols = ", ".join(f'"{c}"' for c in esq.nomes)   # nomeadas: ordem física pode diferir após migração
                 ph = ", ".join("?" * len(esq.nomes))
-                con.executemany(f'INSERT INTO "{tabela}" VALUES ({ph})', linhas)
+                con.executemany(f'INSERT INTO "{tabela}" ({cols}) VALUES ({ph})', linhas)
 
     # --------------------------------------------------------------- parâmetros
     def parametros(self) -> dict[str, object]:

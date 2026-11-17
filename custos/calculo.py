@@ -94,7 +94,7 @@ class MotorCustos:
         pmo["custo"] = pmo["horas"] * pmo["custo_hora"]
         self.linhas_mo = pmo.drop(columns="codigo")
 
-        prod = self.d["produtos"][["codigo", "descricao", "unidade", "margem_desejada_pct",
+        prod = self.d["produtos"][["codigo", "descricao", "grupo", "subgrupo", "unidade", "margem_desejada_pct",
                                    "volume_mensal", "preco_atual"]].copy()
         prod["custo_mp"] = prod["codigo"].map(self.linhas_mp.groupby("produto_codigo")["custo"].sum()).fillna(0.0)
         prod["custo_mo"] = prod["codigo"].map(self.linhas_mo.groupby("produto_codigo")["custo"].sum()).fillna(0.0)
@@ -225,6 +225,32 @@ class MotorCustos:
             "margem_contribuicao_unit": mc,
             "margem_contribuicao_pct": 100 * mc / preco if preco else np.nan,
         }
+
+    def resumo_por_grupo(self, nivel: str = "subgrupo", coluna_preco: str = "preco_sugerido") -> pd.DataFrame:
+        """Resultado mensal projetado agregado por grupo (nivel='grupo') ou grupo+subgrupo.
+
+        Lucro = Σ volume × (preço − custo total − %CV·preço − %CF·preço); a
+        ociosidade de MO não é atribuída a grupos (aparece só no resumo geral).
+        """
+        t = self.tabela_precos()
+        preco = t[coluna_preco].fillna(t["preco_sugerido"]).fillna(0)
+        vol = t["volume_mensal"]
+        t = t.assign(
+            faturamento=vol * preco,
+            margem_contribuicao=vol * (preco * (1 - self.pct_var / 100) - t["custo_direto"]),
+            lucro=vol * (preco - t["custo_total"] - preco * (self.pct_var + self.pct_fix) / 100),
+        )
+        chaves = ["grupo"] if nivel == "grupo" else ["grupo", "subgrupo"]
+        g = t.groupby(chaves, dropna=False).agg(
+            produtos=("codigo", "count"), volume=("volume_mensal", "sum"),
+            faturamento=("faturamento", "sum"), margem_contribuicao=("margem_contribuicao", "sum"),
+            lucro=("lucro", "sum")).reset_index()
+        with np.errstate(divide="ignore", invalid="ignore"):
+            g["mc_pct"] = 100 * g["margem_contribuicao"] / g["faturamento"]
+            g["margem_liquida_pct"] = 100 * g["lucro"] / g["faturamento"]
+        total = g["faturamento"].sum()
+        g["participacao_pct"] = 100 * g["faturamento"] / total if total else np.nan
+        return g.sort_values("faturamento", ascending=False).reset_index(drop=True)
 
     # ------------------------------------------------------------------ empresa
     def resumo(self, coluna_preco: str = "preco_sugerido") -> ResumoEmpresa:

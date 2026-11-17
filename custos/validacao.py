@@ -132,3 +132,51 @@ def checar_referencias(dados: dict[str, pd.DataFrame]) -> tuple[dict[str, pd.Dat
 def _linha(idx: object) -> str:
     # índice 0-based do DataFrame + 2 = linha da planilha (cabeçalho na 1)
     return str(idx + 2) if isinstance(idx, (int, np.integer)) else str(idx)
+
+
+def _chave_nome(valor: object) -> str:
+    """Comparação tolerante: ignora maiúsculas/minúsculas e espaços extras."""
+    return " ".join(str(valor).split()).casefold()
+
+
+def sincronizar_grupos(dados: dict[str, pd.DataFrame]) -> tuple[dict[str, pd.DataFrame], list[str]]:
+    """Mantém produtos e cadastro de grupos coerentes.
+
+    - Grafias equivalentes ('cozinha', ' Cozinha ') são unificadas na grafia
+      já cadastrada (ou na primeira encontrada).
+    - Toda combinação grupo/subgrupo usada por um produto passa a existir no
+      cadastro de grupos (nunca se descarta produto por grupo inexistente).
+    """
+    from .modelos import GRUPOS  # import local evita ciclo
+
+    avisos: list[str] = []
+    grupos = dados.get("grupos", GRUPOS.vazio()).copy()
+    prod = dados.get("produtos", ESQUEMAS["produtos"].vazio()).copy()
+
+    canon_g: dict[str, str] = {}
+    canon_s: dict[tuple[str, str], str] = {}
+
+    def canonizar(g: str, sg: str) -> tuple[str, str]:
+        g = canon_g.setdefault(_chave_nome(g), " ".join(str(g).split()))
+        sg = canon_s.setdefault((_chave_nome(g), _chave_nome(sg)), " ".join(str(sg).split()))
+        return g, sg
+
+    if not grupos.empty:
+        pares = [canonizar(g, sg) for g, sg in zip(grupos["grupo"], grupos["subgrupo"])]
+        grupos[["grupo", "subgrupo"]] = pares
+        grupos = grupos.drop_duplicates(subset=["grupo", "subgrupo"], keep="first")
+
+    if not prod.empty:
+        pares = [canonizar(g, sg) for g, sg in zip(prod["grupo"], prod["subgrupo"])]
+        prod[["grupo", "subgrupo"]] = pares
+        existentes = set(zip(grupos["grupo"], grupos["subgrupo"]))
+        novos = sorted({p for p in pares if p not in existentes})
+        if novos:
+            grupos = pd.concat([grupos, pd.DataFrame(novos, columns=["grupo", "subgrupo"])], ignore_index=True)
+            avisos.append("Grupos/subgrupos incluídos no cadastro por estarem em uso nos produtos: "
+                          + "; ".join(f"{g} › {sg}" for g, sg in novos))
+
+    saida = dict(dados)
+    saida["grupos"] = grupos.sort_values(["grupo", "subgrupo"]).reset_index(drop=True)
+    saida["produtos"] = prod
+    return saida, avisos

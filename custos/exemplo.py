@@ -30,10 +30,15 @@ def dados_exemplo() -> tuple[dict[str, pd.DataFrame], dict]:
             {"codigo": "CV03", "descricao": "Taxa de cartão", "tipo": "percentual", "valor": 3.0},
             {"codigo": "CV04", "descricao": "Frete médio por unidade", "tipo": "unitario", "valor": 15.0},
         ]),
+        "grupos": df([
+            {"grupo": "Cozinha", "subgrupo": "Armários", "descricao": "Módulos aéreos e de chão"},
+            {"grupo": "Escritório", "subgrupo": "Gaveteiros", "descricao": None},
+            {"grupo": "Decoração", "subgrupo": "Nichos e prateleiras", "descricao": None},
+        ]),
         "produtos": df([
-            {"codigo": "P001", "descricao": "Armário aéreo 80cm", "unidade": "un", "margem_desejada_pct": 15.0, "volume_mensal": 60, "preco_atual": 520.0},
-            {"codigo": "P002", "descricao": "Gaveteiro 3 gavetas", "unidade": "un", "margem_desejada_pct": None, "volume_mensal": 40, "preco_atual": 450.0},
-            {"codigo": "P003", "descricao": "Nicho decorativo", "unidade": "un", "margem_desejada_pct": 25.0, "volume_mensal": 120, "preco_atual": 95.0},
+            {"codigo": "P001", "descricao": "Armário aéreo 80cm", "grupo": "Cozinha", "subgrupo": "Armários", "unidade": "un", "margem_desejada_pct": 15.0, "volume_mensal": 60, "preco_atual": 520.0},
+            {"codigo": "P002", "descricao": "Gaveteiro 3 gavetas", "grupo": "Escritório", "subgrupo": "Gaveteiros", "unidade": "un", "margem_desejada_pct": None, "volume_mensal": 40, "preco_atual": 450.0},
+            {"codigo": "P003", "descricao": "Nicho decorativo", "grupo": "Decoração", "subgrupo": "Nichos e prateleiras", "unidade": "un", "margem_desejada_pct": 25.0, "volume_mensal": 120, "preco_atual": 95.0},
         ]),
         "composicao": df([
             {"produto_codigo": "P001", "mp_codigo": "MP01", "quantidade": 2.4, "perda_pct": 12.0},

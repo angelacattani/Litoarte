@@ -17,10 +17,11 @@ import streamlit as st
 from custos import ESQUEMAS, METODOS_RATEIO, ORDEM_TABELAS, MotorCustos, Repositorio
 from custos import configuracao as cfg
 from custos.calculo import brl
+from custos.modelos import GRUPO_PADRAO, SUBGRUPO_PADRAO
 from custos.repositorio import SomenteLeitura
 from custos.trava import TravaEdicao
 from custos.exemplo import dados_exemplo
-from custos.importexport import (COLUNAS_RELATORIO, exportar_csv, exportar_xlsx, ler_csv,
+from custos.importexport import (COLUNAS_GRUPO, COLUNAS_RELATORIO, exportar_csv, exportar_xlsx, ler_csv,
                                  ler_parametros_xlsx, ler_xlsx, planilha_modelo, relatorio_precos)
 
 st.set_page_config(page_title="Custos e Preço de Venda", page_icon="💲", layout="wide")
@@ -135,6 +136,83 @@ def editor_tabela(tabela: str, ajuda: str = "", opcoes: dict | None = None) -> N
                        key=f"csv_{tabela}")
 
 
+SEP = " › "
+
+
+def pagina_produtos() -> None:
+    st.header("Produtos")
+    st.caption("Cada produto pertence a um grupo e subgrupo (cadastre-os em **🗂 Grupos e subgrupos**). "
+               "Margem vazia = margem padrão. Volume mensal é usado em rateios, ocupação de MO e projeções.")
+    tudo = repo.carregar("produtos")
+    grupos = repo.carregar("grupos")
+    opcoes = sorted(set(grupos["grupo"] + SEP + grupos["subgrupo"]) | {GRUPO_PADRAO + SEP + SUBGRUPO_PADRAO})
+
+    c1, c2 = st.columns(2)
+    filtro_g = c1.selectbox("Filtrar por grupo", ["(todos)"] + sorted(grupos["grupo"].unique()), key="fg_prod")
+    subs = grupos.loc[grupos["grupo"] == filtro_g, "subgrupo"].tolist() if filtro_g != "(todos)" else []
+    filtro_s = c2.selectbox("Subgrupo", ["(todos)"] + sorted(subs), key="fs_prod", disabled=not subs)
+    vis = tudo
+    if filtro_g != "(todos)":
+        vis = vis[vis["grupo"] == filtro_g]
+        if filtro_s != "(todos)":
+            vis = vis[vis["subgrupo"] == filtro_s]
+
+    vis = vis.assign(grupo_subgrupo=vis["grupo"] + SEP + vis["subgrupo"]).drop(columns=["grupo", "subgrupo"])
+    cols = ["codigo", "descricao", "grupo_subgrupo"] + [c for c in vis.columns
+                                                       if c not in ("codigo", "descricao", "grupo_subgrupo")]
+    cfg_cols = {k: v for k, v in config_colunas("produtos").items() if k not in ("grupo", "subgrupo")}
+    cfg_cols["grupo_subgrupo"] = st.column_config.SelectboxColumn(
+        "Grupo › Subgrupo *", options=opcoes, required=True,
+        default=(filtro_g + SEP + filtro_s) if filtro_s not in ("(todos)", None) else None)
+    st.caption(f"{len(vis)} de {len(tudo)} produto(s)")
+    ed = st.data_editor(vis[cols], num_rows="dynamic", width="stretch", hide_index=True,
+                        column_config=cfg_cols, key=f"ed_produtos_{filtro_g}_{filtro_s}")
+    b1, b2, _ = st.columns([1, 1, 4])
+    if b1.button("💾 Salvar", key="salvar_produtos", type="primary", disabled=not EDITA):
+        ed = ed.copy()
+        par = ed["grupo_subgrupo"].fillna(GRUPO_PADRAO + SEP + SUBGRUPO_PADRAO).str.split(SEP, n=1, expand=True)
+        ed["grupo"], ed["subgrupo"] = par[0], par[1] if par.shape[1] > 1 else SUBGRUPO_PADRAO
+        ed = ed.drop(columns="grupo_subgrupo")
+        novo = pd.concat([tudo[~tudo["codigo"].isin(vis["codigo"])], ed], ignore_index=True)
+        mostrar_avisos(repo.salvar("produtos", novo))
+    b2.download_button("⬇ CSV", exportar_csv(tudo), "produtos.csv", "text/csv", key="csv_produtos")
+
+
+def pagina_grupos() -> None:
+    st.header("Grupos e subgrupos")
+    st.caption("Uma linha por combinação grupo/subgrupo. Grupos usados por produtos não podem ser "
+               "excluídos (voltam automaticamente ao salvar); para mudar o nome, use **Renomear** abaixo.")
+    grupos = repo.carregar("grupos")
+    uso = repo.carregar("produtos").groupby(["grupo", "subgrupo"]).size().rename("produtos")
+    vis = grupos.merge(uso, left_on=["grupo", "subgrupo"], right_index=True, how="left")
+    vis["produtos"] = vis["produtos"].fillna(0).astype(int)
+    cfg_cols = config_colunas("grupos")
+    cfg_cols["produtos"] = st.column_config.NumberColumn("Nº produtos", disabled=True)
+    ed = st.data_editor(vis, num_rows="dynamic", width="stretch", hide_index=True,
+                        column_config=cfg_cols, key="ed_grupos")
+    if st.button("💾 Salvar", key="salvar_grupos", type="primary", disabled=not EDITA):
+        mostrar_avisos(repo.salvar("grupos", ed.drop(columns="produtos")))
+
+    st.subheader("Renomear")
+    if grupos.empty:
+        return
+    c1, c2 = st.columns(2)
+    alvo = c1.radio("O que renomear", ["Grupo", "Subgrupo"], horizontal=True)
+    g = c1.selectbox("Grupo", sorted(grupos["grupo"].unique()), key="ren_g")
+    sg = None
+    if alvo == "Subgrupo":
+        sg = c1.selectbox("Subgrupo", sorted(grupos.loc[grupos["grupo"] == g, "subgrupo"]), key="ren_s")
+    novo = c2.text_input("Novo nome", key="ren_novo")
+    c2.caption("Se o novo nome já existir, os dois são unificados.")
+    if c2.button("Renomear", disabled=not (EDITA and novo.strip())):
+        if alvo == "Grupo":
+            n = repo.renomear_grupo(g, novo.strip())
+        else:
+            n = repo.renomear_grupo(g, g, sg, novo.strip())
+        st.success(f"Renomeado. {n} produto(s) atualizado(s).")
+        st.rerun()
+
+
 # --------------------------------------------------------------------- páginas
 def pagina_painel() -> None:
     st.header("Painel de preços")
@@ -157,11 +235,28 @@ def pagina_painel() -> None:
     for a in r.alertas:
         st.warning(a)
 
+    st.subheader("Resultado por grupo")
+    nivel = st.radio("Agrupar por", ["grupo", "grupo e subgrupo"], horizontal=True, key="nivel_grupo")
+    rg = m.resumo_por_grupo("grupo" if nivel == "grupo" else "subgrupo",
+                            "preco_sugerido" if escolha == "preço sugerido" else "preco_atual")
+    moeda_g = {c: st.column_config.NumberColumn(COLUNAS_GRUPO[c], format="R$ %.2f")
+               for c in ["faturamento", "margem_contribuicao", "lucro"]}
+    pct_g = {c: st.column_config.NumberColumn(COLUNAS_GRUPO[c], format="%.1f %%")
+             for c in ["mc_pct", "margem_liquida_pct", "participacao_pct"]}
+    st.dataframe(rg, hide_index=True, width="stretch",
+                 column_config={**moeda_g, **pct_g, "grupo": "Grupo", "subgrupo": "Subgrupo",
+                                "produtos": "Nº produtos", "volume": "Volume mensal"})
+    st.caption("Lucro por grupo não inclui a ociosidade de mão de obra, que aparece só no total da empresa.")
+
     st.subheader("Formação de preço por produto")
+    grupos_disp = sorted(tab["grupo"].dropna().unique())
+    sel = st.multiselect("Filtrar grupos", grupos_disp, placeholder="todos os grupos")
+    if sel:
+        tab = tab[tab["grupo"].isin(sel)]
     st.caption(f"Variáveis: {pct(m.pct_var)} do preço + {brl(m.var_unit)}/un · "
                f"Fixos: {METODOS_RATEIO[m.p['metodo_rateio']]}"
                + (f" = {pct(m.pct_fix)}" if m.pct_fix else (f" = {brl(m.taxa_rateio)}" if m.taxa_rateio else "")))
-    cols = ["codigo", "descricao", "custo_mp", "custo_mo", "custo_var_unit", "custo_fixo_unit", "custo_total",
+    cols = ["codigo", "descricao", "grupo", "subgrupo", "custo_mp", "custo_mo", "custo_var_unit", "custo_fixo_unit", "custo_total",
             "margem_pct", "markup_multiplicador", "preco_sugerido", "preco_minimo", "preco_atual",
             "margem_preco_atual_pct", "conc_media", "dif_vs_conc_media_pct", "posicao_mercado",
             "margem_no_preco_conc_pct", "alertas"]
@@ -173,7 +268,8 @@ def pagina_painel() -> None:
     st.dataframe(tab[cols], hide_index=True, width="stretch",
                  column_config={**moeda, **percent,
                                 "markup_multiplicador": st.column_config.NumberColumn("Markup (×)", format="%.3f"),
-                                "codigo": "Código", "descricao": "Descrição", "posicao_mercado": "Posição",
+                                "codigo": "Código", "descricao": "Descrição", "grupo": "Grupo", "subgrupo": "Subgrupo",
+                                "posicao_mercado": "Posição",
                                 "alertas": "Alertas"})
 
     st.subheader("Preço sugerido × concorrência")
@@ -196,7 +292,8 @@ def pagina_ficha() -> None:
     if tab.empty:
         st.info("Cadastre produtos primeiro.")
         return
-    rotulos = dict(zip(tab["codigo"], tab["codigo"] + " — " + tab["descricao"]))
+    rotulos = dict(zip(tab["codigo"], tab["codigo"] + " — " + tab["descricao"]
+                       + "  (" + tab["grupo"] + " › " + tab["subgrupo"] + ")"))
     cod = st.selectbox("Produto", list(rotulos), format_func=rotulos.get)
     d = m.detalhar(cod)
     r = d["resultado"]
@@ -441,8 +538,8 @@ def pagina_io() -> None:
 PAGINAS = {
     "📊 Painel de preços": pagina_painel,
     "🧮 Ficha de custos / simulador": pagina_ficha,
-    "📦 Produtos": lambda: editor_tabela("produtos", "Margem vazia = margem padrão. Volume mensal é usado em rateios, "
-                                                     "ocupação de MO e projeção de resultado."),
+    "📦 Produtos": pagina_produtos,
+    "🗂 Grupos e subgrupos": pagina_grupos,
     "🧾 Ficha técnica": pagina_ficha_tecnica,
     "🧱 Matérias-primas": lambda: editor_tabela("materias_primas", "Custo unitário de reposição, já com frete e "
                                                                   "impostos não recuperáveis."),

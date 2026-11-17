@@ -24,7 +24,7 @@ Arquivo = str | Path | BinaryIO
 
 # Colunas do relatório de preços (nome interno -> rótulo exportado)
 COLUNAS_RELATORIO = {
-    "codigo": "Código", "descricao": "Descrição", "unidade": "Un.",
+    "codigo": "Código", "descricao": "Descrição", "grupo": "Grupo", "subgrupo": "Subgrupo", "unidade": "Un.",
     "custo_mp": "Matéria-prima (R$)", "custo_mo": "Mão de obra (R$)",
     "custo_var_unit": "Variáveis unit. (R$)", "custo_direto": "Custo direto (R$)",
     "custo_fixo_unit": "Fixo rateado (R$)", "custo_total": "Custo total (R$)",
@@ -38,6 +38,13 @@ COLUNAS_RELATORIO = {
     "dif_vs_conc_media_pct": "Dif. vs média conc. %", "posicao_mercado": "Posição",
     "margem_no_preco_conc_pct": "Margem praticando média conc. %",
     "volume_mensal": "Volume mensal", "alertas": "Alertas",
+}
+
+COLUNAS_GRUPO = {
+    "grupo": "Grupo", "subgrupo": "Subgrupo", "produtos": "Nº produtos", "volume": "Volume mensal",
+    "faturamento": "Faturamento (R$)", "margem_contribuicao": "Margem de contribuição (R$)",
+    "lucro": "Lucro (R$)", "mc_pct": "MC %", "margem_liquida_pct": "Margem líquida %",
+    "participacao_pct": "Participação no faturamento %",
 }
 
 
@@ -93,6 +100,8 @@ def exportar_xlsx(dados: dict[str, pd.DataFrame], parametros: dict, destino: Arq
             motor = MotorCustos(dados, parametros)
             relatorio_precos(motor).to_excel(xw, sheet_name="precos", index=False)
             _resumo_df(motor).to_excel(xw, sheet_name="resumo", index=False)
+            motor.resumo_por_grupo().rename(columns=COLUNAS_GRUPO).to_excel(
+                xw, sheet_name="resumo_grupos", index=False)
         for t in ORDEM_TABELAS:
             dados.get(t, ESQUEMAS[t].vazio()).to_excel(xw, sheet_name=t, index=False)
         pd.DataFrame(list(parametros.items()), columns=["chave", "valor"]).to_excel(
