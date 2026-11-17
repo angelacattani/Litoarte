@@ -33,11 +33,44 @@ botão *Code → Download ZIP* no GitHub.
 
 O app abre em http://localhost:8502.
 
-O banco `custos.db` é criado na própria pasta (ou no caminho da variável
-`CUSTOS_DB`). Em **⚙ Parâmetros → Carregar base de exemplo** há uma
+O banco `custos.db` é criado na própria pasta. Para compartilhá-lo, veja
+*Banco de dados compartilhado*. Em **⚙ Parâmetros → Carregar base de exemplo** há uma
 marcenaria fictícia para explorar o sistema.
 
 Testes (com o `.venv` ativo): `pytest -q`
+
+## Banco de dados compartilhado
+
+Produtos, matérias-primas, custos, concorrentes e parâmetros ficam num banco
+**SQLite** (arquivo `custos.db`). Por padrão ele é criado na pasta do sistema;
+para que vários computadores usem os mesmos dados, coloque-o numa **pasta
+compartilhada**:
+
+1. No computador que já tem os dados, abra **🗄 Banco de dados**, informe a
+   pasta (ex.: `\\SERVIDOR\Compartilhado\Litoarte`, `Z:\Litoarte` ou uma pasta
+   do OneDrive) e escolha *Copiar para lá os dados deste computador*.
+2. Nos demais computadores, informe a mesma pasta. Como o banco já existe,
+   ele é usado sem cópia.
+
+O caminho escolhido fica em `config_local.json`, que é de cada máquina e não
+vai para o Git. A variável de ambiente `CUSTOS_DB`, se definida, tem
+prioridade.
+
+**Um editor por vez.** O SQLite não é confiável com gravações simultâneas
+pela rede. Por isso, quem abre primeiro recebe a trava de edição
+(`custos.db.lock`) e os demais ficam em **modo leitura**: veem preços,
+relatórios e exportações, mas não gravam. A barra lateral mostra quem está
+editando. A trava é liberada pelo botão *Liberar edição* ou expira após
+15 minutos sem uso, e pode ser forçada se a pessoa já fechou o sistema.
+
+**Backups.** Um backup automático por dia, feito na primeira abertura em
+modo edição, vai para `backups/` ao lado do banco, mantendo os 30 mais
+recentes. A mesma página permite fazer backup na hora e baixar uma cópia do
+`.db`.
+
+> Em pastas do OneDrive/Dropbox, espere a sincronização terminar depois que
+> a outra pessoa liberar a edição; editar antes disso gera cópias em
+> conflito do arquivo.
 
 ## Funcionalidades
 
@@ -102,7 +135,9 @@ sistema-custos/
 ├── custos/
 │   ├── modelos.py         esquemas das tabelas, parâmetros, aliases de colunas
 │   ├── validacao.py       normalização, conversão numérica BR, integridade referencial
-│   ├── repositorio.py     persistência SQLite (salvar, mesclar, importar)
+│   ├── repositorio.py     persistência SQLite (salvar, mesclar, importar, backup)
+│   ├── configuracao.py    local do banco por máquina (config_local.json)
+│   ├── trava.py           trava de edição para banco em pasta compartilhada
 │   ├── calculo.py         MotorCustos: preço, margens, concorrência, resumo
 │   ├── importexport.py    XLSX/CSV, relatório, planilha-modelo
 │   └── exemplo.py         base de demonstração

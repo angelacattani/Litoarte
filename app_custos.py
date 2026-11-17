@@ -1,7 +1,8 @@
 """Interface Streamlit do sistema de custos e formação de preço.
 
 Execução:  streamlit run app_custos.py
-Banco:     custos.db (SQLite) na pasta do app, ou caminho em CUSTOS_DB.
+Banco:     arquivo SQLite definido na página "Banco de dados" (config_local.json),
+           ou em CUSTOS_DB; padrão: custos.db na pasta do app.
 """
 
 from __future__ import annotations
@@ -14,26 +15,77 @@ import pandas as pd
 import streamlit as st
 
 from custos import ESQUEMAS, METODOS_RATEIO, ORDEM_TABELAS, MotorCustos, Repositorio
+from custos import configuracao as cfg
 from custos.calculo import brl
+from custos.repositorio import SomenteLeitura
+from custos.trava import TravaEdicao
 from custos.exemplo import dados_exemplo
 from custos.importexport import (COLUNAS_RELATORIO, exportar_csv, exportar_xlsx, ler_csv,
                                  ler_parametros_xlsx, ler_xlsx, planilha_modelo, relatorio_precos)
 
 st.set_page_config(page_title="Custos e Preço de Venda", page_icon="💲", layout="wide")
 
-DB = os.environ.get("CUSTOS_DB", str(Path(__file__).with_name("custos.db")))
+DB = cfg.caminho_banco()
 
 
 @st.cache_resource
-def repositorio() -> Repositorio:
-    return Repositorio(DB)
+def repositorio(caminho: str) -> Repositorio:
+    return Repositorio(caminho, trava=TravaEdicao(caminho))
 
 
-repo = repositorio()
+erro_pasta = cfg.checar_pasta(DB) if not DB.exists() else None
+if erro_pasta:
+    st.error(f"Banco de dados inacessível: {erro_pasta}\n\nCaminho configurado: `{DB}`")
+    if st.button("Voltar a usar o banco local desta máquina"):
+        cfg.salvar_config(banco="")
+        st.rerun()
+    st.stop()
+
+try:
+    repo = repositorio(str(DB))
+except Exception as e:  # rede caiu, arquivo corrompido...
+    st.error(f"Não foi possível abrir o banco `{DB}`: {e}")
+    st.stop()
+
+# Depois de "Liberar edição", só volta a editar quando o usuário pedir.
+if st.session_state.get("tentar_editar"):
+    st.session_state["liberou"] = False
+    st.session_state["tentar_editar"] = False
+EDITA = False if st.session_state.get("liberou") else repo.pode_gravar  # renova a trava a cada interação
+if EDITA:
+    try:
+        repo.backup_diario()
+    except OSError as e:
+        st.toast(f"Backup diário não realizado: {e}")
 
 
 def motor() -> MotorCustos:
     return MotorCustos(repo.carregar_tudo(), repo.parametros())
+
+
+def painel_trava() -> None:
+    """Mostra na barra lateral quem está editando o banco."""
+    info = repo.trava.ler()
+    if EDITA:
+        st.success("✏️ Modo edição")
+        if st.button("Liberar edição para outro usuário", help="Use ao terminar, se outras pessoas usam o mesmo banco."):
+            repo.trava.liberar()
+            st.session_state["liberou"] = True
+            st.rerun()
+    else:
+        quem = info.dono if info else "outro usuário"
+        st.warning(f"👁 Somente leitura\n\nEm edição por **{quem}** desde "
+                   f"{info.desde:%d/%m %H:%M}" if info else "👁 Somente leitura")
+        if info:
+            st.caption(f"Última atividade: {info.atividade:%H:%M}. A trava expira após "
+                       f"{int(repo.trava.validade.total_seconds() // 60)} min sem uso.")
+        if st.button("Tentar editar novamente"):
+            st.session_state["tentar_editar"] = True
+            st.rerun()
+        if st.checkbox("A outra pessoa já fechou o sistema") and st.button("Forçar edição", type="primary"):
+            repo.trava.forcar()
+            st.session_state["liberou"] = False
+            st.rerun()
 
 
 def mostrar_avisos(avisos: list[str], sucesso: str = "Dados salvos.") -> None:
@@ -77,7 +129,7 @@ def editor_tabela(tabela: str, ajuda: str = "", opcoes: dict | None = None) -> N
     editado = st.data_editor(df, num_rows="dynamic", width="stretch", hide_index=True,
                              column_config=config_colunas(tabela, opcoes), key=f"ed_{tabela}")
     c1, c2, _ = st.columns([1, 1, 4])
-    if c1.button("💾 Salvar", key=f"salvar_{tabela}", type="primary"):
+    if c1.button("💾 Salvar", key=f"salvar_{tabela}", type="primary", disabled=not EDITA):
         mostrar_avisos(repo.salvar(tabela, editado))
     c2.download_button("⬇ CSV", exportar_csv(repo.carregar(tabela)), f"{tabela}.csv", "text/csv",
                        key=f"csv_{tabela}")
@@ -216,7 +268,7 @@ def pagina_ficha_tecnica() -> None:
                if k != "produto_codigo"}
         ed = st.data_editor(filtro, num_rows="dynamic", hide_index=True, width="stretch",
                             column_config=cfg, key=f"ft_{tabela}_{cod}")
-        if st.button("💾 Salvar", key=f"sft_{tabela}_{cod}", type="primary"):
+        if st.button("💾 Salvar", key=f"sft_{tabela}_{cod}", type="primary", disabled=not EDITA):
             novo = pd.concat([tudo[tudo["produto_codigo"] != cod], ed.assign(produto_codigo=cod)], ignore_index=True)
             mostrar_avisos(repo.salvar(tabela, novo))
 
@@ -234,7 +286,7 @@ def pagina_parametros() -> None:
                               step=1000.0, help="Necessário no método '% sobre o faturamento'.")
         tol = st.number_input("Tolerância para considerar 'alinhado' à concorrência (± %)", 0.0, 100.0,
                               float(p["tolerancia_concorrencia_pct"]), 0.5)
-        if st.form_submit_button("💾 Salvar parâmetros", type="primary"):
+        if st.form_submit_button("💾 Salvar parâmetros", type="primary", disabled=not EDITA):
             repo.salvar_parametros({"margem_padrao_pct": margem, "metodo_rateio": metodo,
                                     "faturamento_mensal_previsto": fat, "tolerancia_concorrencia_pct": tol})
             st.success("Parâmetros salvos.")
@@ -252,15 +304,85 @@ duplicaria o custo. A parcela da folha não consumida pelos volumes previstos ap
     st.divider()
     st.subheader("Base de dados")
     c1, c2 = st.columns(2)
-    if c1.button("Carregar base de exemplo (substitui tudo)"):
+    if c1.button("Carregar base de exemplo (substitui tudo)", disabled=not EDITA):
         dados, params = dados_exemplo()
         repo.excluir_tudo()
         mostrar_avisos(repo.importar(dados, "substituir"), "Base de exemplo carregada.")
         repo.salvar_parametros(params)
-    if c2.checkbox("Confirmo que desejo apagar todos os dados") and c2.button("🗑 Apagar tudo", type="secondary"):
+    if c2.checkbox("Confirmo que desejo apagar todos os dados") and c2.button("🗑 Apagar tudo", type="secondary", disabled=not EDITA):
         repo.excluir_tudo()
         st.success("Base apagada.")
-    st.caption(f"Arquivo do banco: `{DB}`")
+    st.caption(f"Arquivo do banco: `{DB}` — para mudar o local, use a página **🗄 Banco de dados**.")
+
+
+def pagina_banco() -> None:
+    st.header("Banco de dados")
+    st.markdown(f"**Arquivo em uso:** `{DB}`")
+    if DB.exists():
+        stat = DB.stat()
+        st.caption(f"Tamanho: {stat.st_size / 1024:,.0f} KB · Última gravação: "
+                   f"{pd.Timestamp(stat.st_mtime, unit='s', tz='UTC').tz_convert(None):%d/%m/%Y %H:%M} (UTC)")
+    if os.environ.get("CUSTOS_DB"):
+        st.info("O local está fixado pela variável de ambiente CUSTOS_DB e não pode ser alterado aqui.")
+    if cfg.em_pasta_de_nuvem(DB):
+        st.warning("O banco está numa pasta sincronizada (OneDrive/Dropbox/Google Drive). Funciona, mas a "
+                   "sincronização leva alguns segundos: aguarde a outra pessoa liberar a edição e o arquivo "
+                   "sincronizar antes de editar, para não gerar cópias em conflito.")
+
+    st.subheader("Usar uma pasta compartilhada")
+    st.markdown("""
+Para que vários computadores usem **os mesmos produtos e custos**, coloque o banco numa pasta
+de rede ou sincronizada e aponte cada computador para ela. Exemplos de caminho:
+
+- `\\\\SERVIDOR\\Compartilhado\\Litoarte` (pasta de rede)
+- `Z:\\Litoarte` (unidade de rede mapeada)
+- `C:\\Users\\seu.usuario\\OneDrive\\Litoarte` (pasta sincronizada)
+
+Só **um computador edita por vez**; os demais abrem em modo leitura até a edição ser liberada
+(ou expirar após 15 minutos sem uso).
+""")
+    with st.form("local_banco"):
+        novo = st.text_input("Pasta (ou arquivo .db) do banco compartilhado", placeholder=r"Z:\Litoarte")
+        acao = st.radio("Se ainda não existir banco nessa pasta:",
+                        ["Copiar para lá os dados deste computador", "Começar com banco vazio"])
+        ok = st.form_submit_button("Usar este local", type="primary", disabled=bool(os.environ.get("CUSTOS_DB")))
+    if ok and novo.strip():
+        destino = cfg.normalizar_caminho(novo)
+        erro = cfg.checar_pasta(destino)
+        if erro:
+            st.error(erro)
+        else:
+            if destino.exists():
+                st.info(f"Já existe um banco em `{destino}`: ele será usado (nada foi copiado).")
+            elif acao.startswith("Copiar"):
+                repo.copiar_para(destino)
+                st.success("Dados copiados para o novo local.")
+            repo.trava.liberar()
+            cfg.salvar_config(banco=str(destino))
+            st.success(f"Este computador agora usa `{destino}`.")
+            st.rerun()
+    if cfg.ler_config().get("banco") and st.button("Voltar a usar o banco local desta máquina"):
+        repo.trava.liberar()
+        cfg.salvar_config(banco="")
+        st.rerun()
+
+    st.subheader("Backups")
+    pasta_bkp = DB.parent / "backups"
+    st.caption(f"Um backup automático por dia, na primeira abertura em modo edição, em `{pasta_bkp}` "
+               "(mantidos os 30 mais recentes).")
+    c1, c2 = st.columns(2)
+    if c1.button("Fazer backup agora"):
+        alvo = repo.copiar_para(pasta_bkp / f"{DB.stem}_{pd.Timestamp.now():%Y-%m-%d_%H%M%S}.db")
+        st.success(f"Backup salvo em `{alvo}`.")
+    if DB.exists():
+        c2.download_button("⬇ Baixar cópia do banco (.db)", DB.read_bytes(), f"custos_{date.today().isoformat()}.db")
+    bkps = sorted(pasta_bkp.glob("*.db"), reverse=True) if pasta_bkp.exists() else []
+    if bkps:
+        st.dataframe(pd.DataFrame({"arquivo": [b.name for b in bkps],
+                                   "tamanho (KB)": [round(b.stat().st_size / 1024) for b in bkps]}),
+                     hide_index=True, width="stretch")
+        st.caption("Para restaurar um backup: feche o sistema em todos os computadores e copie o arquivo "
+                   f"desejado por cima de `{DB.name}` (renomeando-o).")
 
 
 def pagina_io() -> None:
@@ -280,7 +402,7 @@ def pagina_io() -> None:
                 st.write({ESQUEMAS[t].titulo: f"{len(df)} linha(s)" for t, df in lidos.items()})
                 params_arq = ler_parametros_xlsx(arq)
                 usar_params = bool(params_arq) and st.checkbox("Importar também os parâmetros do arquivo", True)
-                if st.button("Confirmar importação", type="primary", key="imp_xlsx"):
+                if st.button("Confirmar importação", type="primary", key="imp_xlsx", disabled=not EDITA):
                     mostrar_avisos(repo.importar(lidos, modo), "Importação concluída.")
                     if usar_params:
                         repo.salvar_parametros(params_arq)
@@ -298,7 +420,7 @@ def pagina_io() -> None:
             try:
                 bruto = ler_csv(arq_csv, tabela)
                 st.dataframe(bruto.head(20), width="stretch")
-                if st.button("Confirmar importação", type="primary", key="imp_csv"):
+                if st.button("Confirmar importação", type="primary", key="imp_csv", disabled=not EDITA):
                     mostrar_avisos(repo.importar({tabela: bruto}, modo_csv), "Importação concluída.")
             except Exception as e:
                 st.error(f"Falha ao ler o arquivo: {e}")
@@ -333,11 +455,17 @@ PAGINAS = {
     "🏷 Concorrentes": lambda: editor_tabela("concorrentes", "Um preço por produto e concorrente.",
                                             {"produto_codigo": repo.carregar("produtos")["codigo"].tolist()}),
     "⚙ Parâmetros": pagina_parametros,
+    "🗄 Banco de dados": pagina_banco,
     "🔄 Importar / Exportar": pagina_io,
 }
 
 with st.sidebar:
     st.title("💲 Custos & Preço")
     pagina = st.radio("Navegação", list(PAGINAS), label_visibility="collapsed")
+    st.divider()
+    painel_trava()
 
-PAGINAS[pagina]()
+try:
+    PAGINAS[pagina]()
+except SomenteLeitura as e:
+    st.error(str(e))

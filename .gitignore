@@ -5,5 +5,9 @@ __pycache__/
 .pytest_cache/
 # banco local de dados da empresa — nunca versionar
 *.db
+*.db.lock
+*.lock.*.tmp
+config_local.json
+backups/
 .streamlit/secrets.toml
 .DS_Store
