@@ -182,6 +182,10 @@ class ResultadoPreco:
 
 
 # ============================================================================ cálculo
+def _br(v: float, casas: int = 2) -> str:
+    return f"{v:.{casas}f}".replace(".", ",")
+
+
 def fator_perda(perda_pct: float, modo: ModoPerda) -> float:
     p = perda_pct / 100
     if modo == ModoPerda.SOBRE_COMPRA:
@@ -267,8 +271,8 @@ def calcular(entrada: EntradaProduto, regras: RegrasEmpresa) -> ResultadoPreco:
     numerador = cd + cf_unit + cv_fixo
     preco = numerador / md if md > 0 else None
     if preco is None:
-        alertas.append(f"%CV + %CF + margem = {pct_cv + pct_cf + pct_ml:.2f}% ≥ 100%: preço indefinido "
-                       f"(margem máxima possível {100 - pct_cv - pct_cf:.2f}%)")
+        alertas.append(f"%CV + %CF + margem = {_br(pct_cv + pct_cf + pct_ml)} % ≥ 100 %: preço indefinido "
+                       f"(margem máxima possível {_br(100 - pct_cv - pct_cf)} %)")
     div_min = 1 - (pct_cv + pct_cf) / 100
     div_cob = 1 - pct_cv / 100
     if not entrada.materiais and not entrada.mao_de_obra:
@@ -285,7 +289,7 @@ def calcular(entrada: EntradaProduto, regras: RegrasEmpresa) -> ResultadoPreco:
     if entrada.preco_praticado and preco is not None:
         s = resultado.simular(entrada.preco_praticado)
         if s.margem_pct < pct_ml - 1e-9:
-            alertas.append(f"preço praticado rende {s.margem_pct:.1f}% (desejado {pct_ml:.1f}%)")
+            alertas.append(f"preço praticado rende {_br(s.margem_pct, 1)} % (desejado {_br(pct_ml, 1)} %)")
         if s.lucro < 0:
             alertas.append("preço praticado gera prejuízo")
     return replace(resultado, alertas=tuple(alertas))

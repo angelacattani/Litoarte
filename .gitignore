@@ -11,3 +11,4 @@ config_local.json
 backups/
 .streamlit/secrets.toml
 .DS_Store
+instalacao.log

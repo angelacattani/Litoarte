@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 
 from litoarte.db import criar_engine
 from litoarte.domain.models import (Configuracao, CustoFixo, FichaMP, HistoricoCustoMO, HistoricoCustoMP, MaoDeObra,
-                                    MateriaPrima, PerfilVenda, Produto, Subgrupo, UnidadeMedida)
+                                    MateriaPrima, PerfilVenda, Produto, Subgrupo)
 from litoarte.domain.services.precificacao import (calcular_produto, calcular_todos, produtos_que_usam_etapa,
                                                    produtos_que_usam_insumo, regras_empresa)
 from litoarte.migracoes import atualizar_banco

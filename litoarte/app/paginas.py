@@ -5,11 +5,12 @@ from __future__ import annotations
 from nicegui import ui
 from sqlalchemy import func, select
 
-from ..domain.models import (CustoFixo, CustoVariavel, Grupo, MaoDeObra, MateriaPrima, PerfilVenda, Subgrupo)
+from ..domain.models import CustoFixo, CustoVariavel, Grupo, MaoDeObra, MateriaPrima, Subgrupo
 from ..domain.services import configuracao as cfgsvc, perfis as perfsvc
 from ..domain.services.cadastros import ErroValidacao
 from ..domain.services.precificacao import configuracao, regras_empresa
 from . import estado
+from .campos import campo_numero
 from .crud import TelaCadastro
 from .formatos import brl, num, pct
 from .layout import moldura
@@ -45,7 +46,14 @@ def pagina_inicio():
             _cartao("Custos variáveis (perfil padrão)", pct(pct_cv), padrao.nome if padrao else "—",
                     "/custos-variaveis")
             _cartao("Margem padrão", pct(cfg.margem_padrao_pct), "Configuração", "/configuracao")
+        with estado.sessao() as s:
+            from ..domain.services.composicao import resumo_produtos
+            prods = resumo_produtos(s, apenas_ativos=True)
+        abaixo = sum(1 for p in prods if p.abaixo_da_margem)
         with ui.row().classes("gap-4"):
+            _cartao("Produtos ativos", str(len(prods)),
+                    f"{abaixo} com margem abaixo da desejada" if abaixo else "nenhum com margem abaixo",
+                    "/produtos").classes("border-l-4 border-red-500" if abaixo else "")
             _cartao("Matérias-primas", str(cont["MateriaPrima"]), "", "/materias-primas")
             _cartao("Etapas de mão de obra", str(cont["MaoDeObra"]), "", "/mao-de-obra")
             _cartao("Grupos / subgrupos", f"{cont['Grupo']} / {cont['Subgrupo']}", "", "/grupos")
@@ -67,8 +75,8 @@ def pagina_inicio():
                     ui.icon("check_circle" if feito else "radio_button_unchecked",
                             color="positive" if feito else "grey")
                     ui.link(texto, destino).classes("text-body1" + (" text-grey-7" if feito else ""))
-            ui.label("Produtos, ficha técnica e composição de preço chegam na fase 3.").classes(
-                "text-caption text-grey-7 q-mt-sm")
+            ui.link("Depois: cadastrar produtos e montar a composição de preço →", "/produtos").classes(
+                "text-body1 q-mt-sm")
 
 
 # ============================================================================ cadastros simples
@@ -257,16 +265,14 @@ def pagina_configuracao():
             ui.label(f"Custo fixo total mensal: {brl(r.custo_fixo_total)}").classes("text-caption text-grey-7")
             metodo = ui.radio(cfgsvc.ROTULOS_RATEIO, value=vals["metodo_rateio"]).props("dense").mark("metodo")
             with ui.grid(columns=3).classes("w-full gap-4"):
-                fat = ui.number("Faturamento base mensal (R$)", value=vals["faturamento_base_mensal"]) \
-                    .props("outlined dense clearable").mark("faturamento")
-                horas = ui.number("Capacidade de horas/mês", value=vals["capacidade_horas_mes"]) \
-                    .props(f'outlined dense clearable hint="vazio = soma das etapas ({num(auto_horas, 1) or "0"} h)"')
-                unid = ui.number("Capacidade de unidades/mês", value=vals["capacidade_unidades_mes"]) \
-                    .props("outlined dense clearable")
+                fat = campo_numero("Faturamento base mensal (R$)", vals["faturamento_base_mensal"]).mark("faturamento")
+                horas = campo_numero("Capacidade de horas/mês", vals["capacidade_horas_mes"]) \
+                    .props(f'hint="vazio = soma das etapas ({num(auto_horas, 1) or "0"} h)"')
+                unid = campo_numero("Capacidade de unidades/mês", vals["capacidade_unidades_mes"])
             ui.separator()
             ui.label("Margem e perda").classes("text-subtitle1 text-weight-medium")
-            margem = ui.number("Margem de lucro padrão (%)", value=vals["margem_padrao_pct"], min=0, max=99.99) \
-                .props('outlined dense hint="usada nos produtos sem margem própria"').classes("w-64").mark("margem")
+            margem = campo_numero("Margem de lucro padrão (%)", vals["margem_padrao_pct"]) \
+                .props('hint="usada nos produtos sem margem própria"').classes("w-64").mark("margem")
             perda = ui.radio(cfgsvc.ROTULOS_PERDA, value=vals["modo_perda"]).props("dense")
             ui.label("Com 10 % de perda: sobre o material comprado = fator 1,111; acréscimo = fator 1,100.") \
                 .classes("text-caption text-grey-7")
@@ -290,6 +296,68 @@ def pagina_configuracao():
                 ui.button("Salvar", icon="save", on_click=salvar).mark("salvar-config")
 
 
+# ============================================================================ produtos e composição
+def pagina_produtos():
+    from .produtos_ui import TelaProdutos
+    with moldura("Produtos", "/produtos"):
+        TelaProdutos().render()
+
+
+def pagina_composicao(pid: str):
+    from .composicao_ui import TelaComposicao
+    with moldura("Composição de preço", "/produtos"):
+        try:
+            produto_id = None if pid == "novo" else int(pid)
+            tela = TelaComposicao(produto_id)
+        except (ValueError, LookupError):
+            ui.label("Produto não encontrado.").classes("text-negative")
+            ui.link("Voltar para a lista", "/produtos")
+            return
+        if not tela.cat.subgrupos:
+            ui.label("Cadastre ao menos um grupo e subgrupo antes de criar produtos.").classes("text-warning")
+            ui.link("Ir para Grupos e subgrupos", "/grupos")
+            return
+        tela.render()
+
+
+# ============================================================================ histórico de custos
+def pagina_historico():
+    from datetime import date
+
+    from ..planilhas import relatorios as R
+    with moldura("Histórico de custos", "/historico"):
+        with estado.sessao() as s:
+            df = R.historico_custos(s)
+        ui.label("Todos os reajustes de custo de matérias-primas e de mão de obra, manuais ou por importação, "
+                 "registrados na mesma transação da alteração.").classes("text-body2 text-grey-8")
+        rows = [{"i": i, "data": r["Data"].strftime("%d/%m/%Y %H:%M") if r["Data"] is not None else "",
+                 "tipo": r["Tipo"], "codigo": r["Código"], "descricao": r["Descrição"],
+                 "anterior": brl(r["Anterior"], 4) if r["Anterior"] is not None else "—",
+                 "novo": brl(r["Novo"], 4),
+                 "var": pct(r["Variação (%)"]) if r["Variação (%)"] == r["Variação (%)"] and r["Variação (%)"]
+                 is not None else "—", "origem": r["Origem"]} for i, r in df.iterrows()]
+        with ui.row().classes("w-full items-center"):
+            busca = ui.input(placeholder="Filtrar por código ou descrição...").props("dense outlined clearable") \
+                .classes("w-80")
+            ui.space()
+            ui.button("Exportar", icon="download", on_click=lambda: ui.download(
+                R.xlsx({"Histórico de custos": df}), f"historico_custos_{date.today().isoformat()}.xlsx")) \
+                .props("flat")
+        tabela = ui.table(rows=rows, row_key="i", pagination={"rowsPerPage": 25}, columns=[
+            {"name": "data", "label": "Data", "field": "data", "align": "left", "sortable": True},
+            {"name": "tipo", "label": "Tipo", "field": "tipo", "align": "left", "sortable": True},
+            {"name": "codigo", "label": "Código", "field": "codigo", "align": "left", "sortable": True},
+            {"name": "descricao", "label": "Descrição", "field": "descricao", "align": "left"},
+            {"name": "anterior", "label": "Anterior", "field": "anterior", "align": "right"},
+            {"name": "novo", "label": "Novo", "field": "novo", "align": "right"},
+            {"name": "var", "label": "Variação", "field": "var", "align": "right"},
+            {"name": "origem", "label": "Origem", "field": "origem", "align": "left"},
+        ]).props("flat dense bordered").classes("w-full").mark("tabela-historico")
+        tabela.bind_filter_from(busca, "value")
+        if not rows:
+            ui.label("Nenhum reajuste registrado ainda.").classes("text-grey-7")
+
+
 # ============================================================================ registro
 ROTAS = {
     "/": pagina_inicio,
@@ -301,6 +369,9 @@ ROTAS = {
     "/unidades": pagina_unidades,
     "/fornecedores": pagina_fornecedores,
     "/configuracao": pagina_configuracao,
+    "/produtos": pagina_produtos,
+    "/produtos/{pid}": pagina_composicao,
+    "/historico": pagina_historico,
 }
 
 

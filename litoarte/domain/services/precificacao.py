@@ -10,7 +10,8 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from ..models import (Configuracao, CustoFixo, FichaMO, FichaMP, MaoDeObra, MateriaPrima, PerfilVenda, Produto)
+from ..models import (Configuracao, CustoFixo, FichaMO, FichaMP, MaoDeObra, MateriaPrima, PerfilVenda, Produto,
+                      Subgrupo)
 from ..pricing.engine import (EntradaProduto, ItemCustoVariavel, LinhaMaoObra, LinhaMaterial, MetodoRateio, ModoPerda,
                               ModoQtd, RegrasEmpresa, ResultadoPreco, calcular)
 
@@ -70,6 +71,7 @@ _CARGA_FICHA = (
     selectinload(Produto.materiais).selectinload(FichaMP.materia_prima).selectinload(MateriaPrima.unidade_consumo),
     selectinload(Produto.mao_de_obra).selectinload(FichaMO.mao_de_obra),
     selectinload(Produto.perfil_venda).selectinload(PerfilVenda.custos),
+    selectinload(Produto.subgrupo).selectinload(Subgrupo.grupo),
 )
 
 
