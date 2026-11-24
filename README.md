@@ -1,7 +1,7 @@
 # Litoarte v2 — Composição de Custos e Formação de Preço de Venda
 
-> Branch `v2`: as quatro fases da especificação estão concluídas. A v1 (Streamlit) continua na
-> branch `main` até a junção.
+> Versão 2. A versão anterior (v1, Streamlit) está preservada na etiqueta
+> [`v1-final`](https://github.com/angelacattani/Litoarte/tree/v1-final).
 
 Especificação completa: [docs/especificacao_v2.md](docs/especificacao_v2.md) (modelo de dados,
 fluxo de telas e motor de precificação).
