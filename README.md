@@ -72,17 +72,50 @@ recentes. A mesma página permite fazer backup na hora e baixar uma cópia do
 > a outra pessoa liberar a edição; editar antes disso gera cópias em
 > conflito do arquivo.
 
+## Ficha técnica por subgrupo e dimensões
+
+A ficha padrão do **subgrupo** vale para todos os produtos dele; o que muda
+entre eles são as **dimensões** (largura × altura, cm). Cada item tem uma
+base de cálculo:
+
+| Base | Consumo por unidade de produto |
+|---|---|
+| `unidade` | quantidade |
+| `area` | quantidade × área do produto (m²) |
+| `perimetro` | quantidade × perímetro do produto (m) |
+| `aproveitamento` | quantidade ÷ peças por folha (dimensões da matéria-prima) |
+
+Peças por folha: `⌊(útil + e)/(peça + e)⌋` em cada direção, sendo
+útil = dimensão da folha − 2 × margem e e = espaço entre peças. São testadas
+as duas orientações, e a sobra é aproveitada com peças giradas.
+
+Exemplo (base de demonstração, subgrupo *04 Papelaria › 01 Recortes
+impressos*): papel em folha de 1 × 2 m a R$ 18,00, impressão a R$ 60,00 por
+folha, corte em plotter a R$ 0,15/m e saquinho a R$ 0,12.
+
+| Recorte | Peças/folha | Papel | Impressão | Corte | Embalagem |
+|---|---|---|---|---|---|
+| 15 × 15 cm | 78 (6 × 13; 87,75 %) | 18/78 × 1,05 = 0,2423 | 60/78 × 1,05 = 0,8077 | 0,6 m × 0,15 = 0,0900 | 0,1224 |
+| 10 × 10 cm | 200 | 0,0945 | 0,3150 | 0,0600 | 0,1224 |
+| 20 × 30 cm | 33 (30 + 3 giradas) | 0,5727 | 1,9091 | 0,1500 | 0,1224 |
+
+Na ficha do produto, uma linha com o mesmo item **substitui** a do
+subgrupo, e **quantidade 0 exclui** o item herdado. Abas de importação:
+`composicao_subgrupo` e `mo_subgrupo` (grupo_codigo, subgrupo_codigo,
+item, base, quantidade/horas...). A coluna `base` também aceita `folha`,
+`chapa`, `m²`, `m`, `linear`.
+
 ## Funcionalidades
 
 | Módulo | Conteúdo |
 |---|---|
-| Matérias-primas | código, descrição, unidade, custo unitário, fornecedor |
+| Matérias-primas, insumos e serviços | código, descrição, unidade, custo unitário, dimensões de folha/chapa (largura × comprimento, margem), fornecedor |
 | Mão de obra direta | salário, encargos %, horas produtivas/mês, nº de funcionários → custo-hora |
 | Custos fixos | valores mensais por categoria |
 | Custos variáveis | **percentual** sobre o preço (impostos, comissão, cartão) ou **unitário** em R$/un (frete, embalagem avulsa) |
 | Grupos e subgrupos | código + descrição; subgrupo com código único dentro do grupo; contagem de produtos; troca de código em cascata |
-| Produtos | vínculo por código de grupo e subgrupo, margem desejada (ou padrão), volume mensal previsto, preço atual praticado |
-| Ficha técnica | consumo de MP por unidade com % de perda; horas de MO por função |
+| Produtos | vínculo por código de grupo e subgrupo, dimensões (largura × altura em cm), margem desejada (ou padrão), volume mensal previsto, preço atual praticado |
+| Ficha técnica | **padrão por subgrupo** + ajustes por produto; consumo por unidade, área, perímetro ou aproveitamento de folha; % de perda; horas de MO por unidade, m² ou metro |
 | Concorrentes | preço por produto e concorrente, com data de coleta |
 | Painel | resultado por grupo/subgrupo (faturamento, MC, lucro, participação), filtro por grupo, preço sugerido, mínimo, cobertura, markup, MC, posição vs. concorrência, alertas, DRE projetada, ponto de equilíbrio, ocupação da MO |
 | Simulador | margem líquida, lucro e MC para qualquer preço |
@@ -153,6 +186,7 @@ sistema-custos/
 │   ├── configuracao.py    local do banco por máquina (config_local.json)
 │   ├── trava.py           trava de edição para banco em pasta compartilhada
 │   ├── calculo.py         MotorCustos: preço, margens, concorrência, resumo
+│   ├── dimensoes.py       peças por folha (encaixe) e ficha efetiva subgrupo + produto
 │   ├── importexport.py    XLSX/CSV, relatório, planilha-modelo
 │   └── exemplo.py         base de demonstração
 └── tests/test_custos.py

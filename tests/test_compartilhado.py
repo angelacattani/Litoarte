@@ -66,7 +66,7 @@ def test_backup_diario_unico_e_consistente(banco):
     assert alvo is not None and alvo.exists()
     assert repo.backup_diario() is None  # só um por dia
     copia = Repositorio(alvo)
-    assert len(copia.carregar("produtos")) == 3
+    assert len(copia.carregar("produtos")) == 6
 
 
 def test_backup_mantem_os_mais_recentes(banco, tmp_path):

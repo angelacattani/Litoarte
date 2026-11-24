@@ -67,10 +67,10 @@ def test_importa_por_nome_encontra_ou_cria(repo):
     p = _prod(repo)
     assert tuple(p.loc["X1", ["grupo_codigo", "subgrupo_codigo"]]) == ("01", "02")
     assert tuple(p.loc["X2", ["grupo_codigo", "subgrupo_codigo"]]) == ("01", "03")
-    assert tuple(p.loc["X3", ["grupo_codigo", "subgrupo_codigo"]]) == ("04", "01")
+    assert tuple(p.loc["X3", ["grupo_codigo", "subgrupo_codigo"]]) == ("05", "01")
     g = repo.carregar("grupos").set_index("codigo")["descricao"]
-    assert g["04"] == "Cadeiras"
-    assert any("Grupos criados: 04 Cadeiras" in a for a in avisos)
+    assert g["05"] == "Cadeiras"
+    assert any("Grupos criados: 05 Cadeiras" in a for a in avisos)
 
 
 def test_codigo_inexistente_cria_com_nome_da_planilha(repo):
@@ -86,7 +86,7 @@ def test_grupo_em_uso_nao_e_excluido(repo):
     repo.salvar("grupos", repo.carregar("grupos").iloc[0:0])
     g = repo.carregar("grupos").set_index("codigo")["descricao"]
     assert g["01"] == "Cozinha"                  # restaurado com a descrição anterior
-    assert len(repo.carregar("produtos")) == 3   # nenhum produto perdido
+    assert len(repo.carregar("produtos")) == 6   # nenhum produto perdido
     # subgrupo sem produto (01/02 Balcões) cai junto com o grupo? Não: o grupo 01 voltou,
     # mas a exclusão em massa removeu os subgrupos órfãos que não estavam em uso
     sg = set(map(tuple, repo.carregar("subgrupos")[["grupo_codigo", "codigo"]].values))
@@ -115,7 +115,7 @@ def test_resumo_por_grupo_fecha_com_total(repo):
     m = MotorCustos(repo.carregar_tudo(), repo.parametros())
     rg = m.resumo_por_grupo("grupo")
     assert rg["faturamento"].sum() == pytest.approx(m.resumo().faturamento_projetado)
-    assert set(rg["grupo_codigo"]) == {"01", "02", "03"}
+    assert set(rg["grupo_codigo"]) == {"01", "02", "03", "04"}
     assert "subgrupo_codigo" in m.resumo_por_grupo("subgrupo")
 
 

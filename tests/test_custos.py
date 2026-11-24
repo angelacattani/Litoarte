@@ -29,9 +29,9 @@ def repo(tmp_path, base):
 def test_preco_markup_divisor_calculado_a_mao(base):
     dados, p = base
     linha = MotorCustos(dados, p).tabela_precos().set_index("codigo").loc["P001"]
-    mp = 2.4 * 1.12 * 62 + 4 * 4.5 + 9 * 1.10 * 0.90 + 2 * 12 + 8
+    mp = 2.4 * 1.12 * 62 + 4 * 4.5 + 9 * 1.10 * 0.90 + 2 * 12 + 8 + 15  # + frete (FRT01)
     mo = 2.0 * (3200 * 1.7 / 160) + 0.5 * (2200 * 1.7 / 160)
-    cd = mp + mo + 15
+    cd = mp + mo
     pct_fix = 100 * 10600 / 75000
     preco = cd / (1 - (16 + pct_fix + 15) / 100)
     assert linha["custo_mp"] == pytest.approx(mp)
@@ -118,10 +118,10 @@ def test_validacao_aliases_e_erros():
 # ---------------------------------------------------------------- repositório
 def test_repositorio_roundtrip(repo, base):
     dados, p = base
-    assert len(repo.carregar("produtos")) == 3
+    assert len(repo.carregar("produtos")) == 6
     assert repo.parametros()["faturamento_mensal_previsto"] == 75000.0
-    t1 = MotorCustos(dados, p).tabela_precos()["preco_sugerido"]
-    t2 = MotorCustos(repo.carregar_tudo(), repo.parametros()).tabela_precos()["preco_sugerido"]
+    t1 = MotorCustos(dados, p).tabela_precos().set_index("codigo")["preco_sugerido"].sort_index()
+    t2 = MotorCustos(repo.carregar_tudo(), repo.parametros()).tabela_precos().set_index("codigo")["preco_sugerido"].sort_index()
     assert t1.tolist() == pytest.approx(t2.tolist())
 
 
@@ -130,9 +130,9 @@ def test_mesclar_faz_upsert(repo):
                           {"codigo": "P900", "descricao": "Produto novo"}])
     repo.mesclar("produtos", novos)
     prod = repo.carregar("produtos").set_index("codigo")
-    assert len(prod) == 4
+    assert len(prod) == 7
     assert prod.loc["P001", "descricao"] == "Armário NOVO"
-    assert len(repo.carregar("composicao")) == 11  # ficha técnica preservada
+    assert len(repo.carregar("composicao")) == 14  # ficha técnica preservada
 
 
 def test_referencia_orfa_e_descartada(repo):
@@ -157,8 +157,8 @@ def test_xlsx_roundtrip(tmp_path, repo):
     r2 = Repositorio(tmp_path / "novo.db")
     assert r2.importar(lidos, modo="substituir") == []
     r2.salvar_parametros(ler_parametros_xlsx(io.BytesIO(conteudo)))
-    a = MotorCustos(dados, params).tabela_precos()["preco_sugerido"]
-    b = MotorCustos(r2.carregar_tudo(), r2.parametros()).tabela_precos()["preco_sugerido"]
+    a = MotorCustos(dados, params).tabela_precos().set_index("codigo")["preco_sugerido"].sort_index()
+    b = MotorCustos(r2.carregar_tudo(), r2.parametros()).tabela_precos().set_index("codigo")["preco_sugerido"].sort_index()
     assert a.tolist() == pytest.approx(b.tolist())
 
 
@@ -166,7 +166,7 @@ def test_csv_formato_brasileiro(repo):
     csv = exportar_csv(repo.carregar("materias_primas"))
     assert csv.startswith(b"\xef\xbb\xbf") and b";" in csv and b"62,0000" in csv
     df, erros = validar(ler_csv(io.BytesIO(csv), "materias_primas"), "materias_primas")
-    assert not erros and df["custo_unitario"].iloc[0] == 62.0
+    assert not erros and df.set_index("codigo").loc["MP01", "custo_unitario"] == 62.0
 
 
 def test_importa_csv_de_produtos_legado():

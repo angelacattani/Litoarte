@@ -68,12 +68,18 @@ def _dtype(tipo: str) -> str:
 # Esquemas
 # --------------------------------------------------------------------------
 MATERIAS_PRIMAS = Esquema(
-    "materias_primas", "Matérias-primas",
+    "materias_primas", "Matérias-primas, insumos e serviços",
     (
         Coluna("codigo", obrigatoria=True),
         Coluna("descricao", obrigatoria=True),
-        Coluna("unidade", padrao="un", descricao="kg, m, L, un..."),
-        Coluna("custo_unitario", "real", obrigatoria=True, descricao="R$ por unidade de compra, já com frete e impostos não recuperáveis"),
+        Coluna("unidade", padrao="un", descricao="un, folha, m², m, kg, L..."),
+        Coluna("custo_unitario", "real", obrigatoria=True,
+               descricao="R$ por unidade (por folha/chapa inteira quando usada por aproveitamento), "
+                         "já com frete e impostos não recuperáveis"),
+        Coluna("largura_m", "real", descricao="folha/chapa/bobina: largura em metros"),
+        Coluna("comprimento_m", "real", descricao="folha/chapa/bobina: comprimento em metros"),
+        Coluna("margem_cm", "real", padrao=0.0,
+               descricao="borda não aproveitável em cada lado da folha (pinça, refile), em cm"),
         Coluna("fornecedor"),
     ),
     chave=("codigo",),
@@ -140,6 +146,36 @@ SUBGRUPOS = Esquema(
     referencias={"grupo_codigo": "grupos.codigo"},
 )
 
+COMPOSICAO_SUBGRUPO = Esquema(
+    "composicao_subgrupo", "Ficha padrão do subgrupo — matérias-primas",
+    (
+        Coluna("grupo_codigo", obrigatoria=True),
+        Coluna("subgrupo_codigo", obrigatoria=True),
+        Coluna("mp_codigo", obrigatoria=True),
+        Coluna("base", padrao="unidade", descricao="unidade | area | perimetro | aproveitamento"),
+        Coluna("quantidade", "real", obrigatoria=True),
+        Coluna("perda_pct", "real", padrao=0.0),
+        Coluna("espacamento_cm", "real", padrao=0.0),
+    ),
+    chave=("grupo_codigo", "subgrupo_codigo", "mp_codigo"),
+    referencias={("grupo_codigo", "subgrupo_codigo"): "subgrupos.grupo_codigo,codigo",
+                 "mp_codigo": "materias_primas.codigo"},
+)
+
+MO_SUBGRUPO = Esquema(
+    "mo_subgrupo", "Ficha padrão do subgrupo — mão de obra",
+    (
+        Coluna("grupo_codigo", obrigatoria=True),
+        Coluna("subgrupo_codigo", obrigatoria=True),
+        Coluna("mo_codigo", obrigatoria=True),
+        Coluna("base", padrao="unidade", descricao="unidade | area | perimetro"),
+        Coluna("horas", "real", obrigatoria=True),
+    ),
+    chave=("grupo_codigo", "subgrupo_codigo", "mo_codigo"),
+    referencias={("grupo_codigo", "subgrupo_codigo"): "subgrupos.grupo_codigo,codigo",
+                 "mo_codigo": "mao_de_obra.codigo"},
+)
+
 PRODUTOS = Esquema(
     "produtos", "Produtos",
     (
@@ -147,6 +183,8 @@ PRODUTOS = Esquema(
         Coluna("descricao", obrigatoria=True),
         Coluna("grupo_codigo", padrao=GRUPO_PADRAO_COD, descricao="código do grupo"),
         Coluna("subgrupo_codigo", padrao=SUBGRUPO_PADRAO_COD, descricao="código do subgrupo (dentro do grupo)"),
+        Coluna("largura_cm", "real", descricao="dimensão do produto acabado, em cm"),
+        Coluna("altura_cm", "real", descricao="dimensão do produto acabado, em cm"),
         Coluna("unidade", padrao="un"),
         Coluna("margem_desejada_pct", "real", descricao="vazio = usa a margem padrão dos parâmetros"),
         Coluna("volume_mensal", "real", padrao=0.0, descricao="vendas mensais previstas (unidades)"),
@@ -155,13 +193,32 @@ PRODUTOS = Esquema(
     chave=("codigo",),
 )
 
+
+# Como a quantidade de um item da ficha técnica é calculada a partir das
+# dimensões do produto (largura × altura, em cm):
+BASES_CALCULO = {
+    "unidade": "quantidade fixa por unidade de produto",
+    "area": "quantidade × área do produto (m²)",
+    "perimetro": "quantidade × perímetro do produto (m) — ex.: corte",
+    "aproveitamento": "quantidade ÷ peças por folha/chapa (dimensões da matéria-prima)",
+}
+BASES_MO = ("unidade", "area", "perimetro")
+ALIASES_BASE = {"un": "unidade", "unid": "unidade", "fixa": "unidade", "fixo": "unidade",
+                "m2": "area", "m²": "area", "área": "area",
+                "perímetro": "perimetro", "m": "perimetro", "linear": "perimetro", "metro_linear": "perimetro",
+                "chapa": "aproveitamento", "folha": "aproveitamento", "encaixe": "aproveitamento",
+                "pecas_por_folha": "aproveitamento"}
+
 COMPOSICAO = Esquema(
     "composicao", "Ficha técnica — matérias-primas",
     (
         Coluna("produto_codigo", obrigatoria=True),
         Coluna("mp_codigo", obrigatoria=True),
-        Coluna("quantidade", "real", obrigatoria=True, descricao="na unidade da matéria-prima, por unidade de produto"),
+        Coluna("base", padrao="unidade", descricao="unidade | area | perimetro | aproveitamento"),
+        Coluna("quantidade", "real", obrigatoria=True,
+               descricao="fator conforme a base (un, camadas, faces...); 0 exclui item herdado do subgrupo"),
         Coluna("perda_pct", "real", padrao=0.0, descricao="perda/refugo do processo"),
+        Coluna("espacamento_cm", "real", padrao=0.0, descricao="aproveitamento: espaço entre peças (sangria/corte)"),
     ),
     chave=("produto_codigo", "mp_codigo"),
     referencias={"produto_codigo": "produtos.codigo", "mp_codigo": "materias_primas.codigo"},
@@ -172,7 +229,9 @@ PRODUTO_MAO_DE_OBRA = Esquema(
     (
         Coluna("produto_codigo", obrigatoria=True),
         Coluna("mo_codigo", obrigatoria=True),
-        Coluna("horas", "real", obrigatoria=True, descricao="horas por unidade de produto"),
+        Coluna("base", padrao="unidade", descricao="unidade | area | perimetro"),
+        Coluna("horas", "real", obrigatoria=True,
+               descricao="horas por unidade, por m² ou por metro, conforme a base; 0 exclui item herdado"),
     ),
     chave=("produto_codigo", "mo_codigo"),
     referencias={"produto_codigo": "produtos.codigo", "mo_codigo": "mao_de_obra.codigo"},
@@ -194,7 +253,7 @@ CONCORRENTES = Esquema(
 ESQUEMAS: dict[str, Esquema] = {
     e.tabela: e
     for e in (MATERIAS_PRIMAS, MAO_DE_OBRA, CUSTOS_FIXOS, CUSTOS_VARIAVEIS,
-              GRUPOS, SUBGRUPOS, PRODUTOS, COMPOSICAO, PRODUTO_MAO_DE_OBRA, CONCORRENTES)
+              GRUPOS, SUBGRUPOS, COMPOSICAO_SUBGRUPO, MO_SUBGRUPO, PRODUTOS, COMPOSICAO, PRODUTO_MAO_DE_OBRA, CONCORRENTES)
 }
 
 # Ordem que respeita dependências (pais antes dos filhos) — usada em import.
@@ -231,6 +290,10 @@ ALIASES = {
     "salario": "salario_mensal", "encargos": "encargos_pct", "horas_mes": "horas_produtivas_mes",
     "valor_mes": "valor_mensal", "produto_cod": "produto_codigo", "materia_prima": "mp_codigo",
     "perda": "perda_pct",
+    "largura": ("largura_cm", "largura_m"), "altura": ("altura_cm",), "comprimento": ("altura_cm", "comprimento_m"),
+    "larg": ("largura_cm", "largura_m"), "alt": ("altura_cm",), "comp": ("altura_cm", "comprimento_m"),
+    "margem_cm": "margem_cm", "espacamento": "espacamento_cm", "espaco": "espacamento_cm",
+    "sangria": "espacamento_cm", "base_calculo": "base", "base_de_calculo": "base", "tipo_calculo": "base",
     "cod_grupo": "grupo_codigo", "codigo_grupo": "grupo_codigo", "grupo_cod": "grupo_codigo",
     "cd_grupo": "grupo_codigo", "id_grupo": "grupo_codigo",
     "cod_subgrupo": "subgrupo_codigo", "codigo_subgrupo": "subgrupo_codigo", "subgrupo_cod": "subgrupo_codigo",
@@ -266,7 +329,8 @@ def normalizar_colunas(df: pd.DataFrame, esquema: Esquema) -> pd.DataFrame:
                 n = n[: -len(sufixo)]
                 break
         if n not in validos:
-            n = ALIASES.get(n, n)
+            alvo = ALIASES.get(n, n)
+            n = next((a for a in alvo if a in validos), n) if isinstance(alvo, tuple) else alvo
         if n in validos and n not in mapa.values():
             mapa[col] = n
     return df.rename(columns=mapa)

@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from .dimensoes import ficha_efetiva, pecas_por_folha
 from .modelos import ESQUEMAS, METODOS_RATEIO, PARAMETROS_PADRAO
 
 
@@ -81,20 +82,36 @@ class MotorCustos:
         self.var_unit = float(cv.loc[cv["tipo"] == "unitario", "valor"].sum())
         self.total_fixos = float(self.d["custos_fixos"]["valor_mensal"].sum())
 
-        # Linhas da ficha técnica valorizadas
-        comp = self.d["composicao"].merge(
-            self.d["materias_primas"][["codigo", "descricao", "unidade", "custo_unitario"]],
-            left_on="mp_codigo", right_on="codigo", how="left", suffixes=("", "_mp"))
-        comp["qtd_com_perda"] = comp["quantidade"] * (1 + comp["perda_pct"] / 100)
-        comp["custo"] = comp["qtd_com_perda"] * comp["custo_unitario"]
-        self.linhas_mp = comp.drop(columns="codigo")
+        # Ficha efetiva (padrão do subgrupo + ajustes do produto) valorizada pelas dimensões
+        produtos = self.d["produtos"]
+        dims = produtos.set_index("codigo")[["largura_cm", "altura_cm"]]
+        self.problemas: dict[str, list[str]] = {}
 
-        pmo = self.d["produto_mao_de_obra"].merge(
-            mo[["codigo", "funcao", "custo_hora"]], left_on="mo_codigo", right_on="codigo", how="left")
-        pmo["custo"] = pmo["horas"] * pmo["custo_hora"]
-        self.linhas_mo = pmo.drop(columns="codigo")
+        comp = ficha_efetiva(produtos, self.d["composicao"], self.d["composicao_subgrupo"], "mp_codigo", "quantidade")
+        comp = comp.merge(self.d["materias_primas"][["codigo", "descricao", "unidade", "custo_unitario",
+                                                     "largura_m", "comprimento_m", "margem_cm"]],
+                          left_on="mp_codigo", right_on="codigo", how="left").drop(columns="codigo")
+        comp = comp.join(dims, on="produto_codigo")
+        enc = [self._encaixe(r) for r in comp.itertuples()]
+        comp["pecas_folha"] = [e.pecas if e else np.nan for e in enc]
+        comp["disposicao"] = [e.disposicao if e else None for e in enc]
+        comp["aproveitamento_pct"] = [e.aproveitamento_pct if e else np.nan for e in enc]
+        comp["fator"] = self._fator(comp)
+        comp["consumo"] = comp["quantidade"] * comp["fator"]
+        comp["qtd_com_perda"] = comp["consumo"] * (1 + comp["perda_pct"] / 100)
+        comp["custo"] = (comp["qtd_com_perda"] * comp["custo_unitario"]).fillna(0.0)
+        self.linhas_mp = comp
 
-        prod = self.d["produtos"][["codigo", "descricao", "grupo_codigo", "subgrupo_codigo", "unidade",
+        pmo = ficha_efetiva(produtos, self.d["produto_mao_de_obra"], self.d["mo_subgrupo"], "mo_codigo", "horas")
+        pmo = pmo.merge(mo[["codigo", "funcao", "custo_hora"]], left_on="mo_codigo", right_on="codigo",
+                        how="left").drop(columns="codigo").join(dims, on="produto_codigo")
+        pmo["fator"] = self._fator(pmo)
+        pmo["horas_efetivas"] = (pmo["horas"] * pmo["fator"]).fillna(0.0)
+        pmo["custo"] = pmo["horas_efetivas"] * pmo["custo_hora"]
+        self.linhas_mo = pmo
+
+        prod = self.d["produtos"][["codigo", "descricao", "grupo_codigo", "subgrupo_codigo", "largura_cm", "altura_cm",
+                                   "unidade",
                                    "margem_desejada_pct", "volume_mensal", "preco_atual"]].copy()
         # descrições de grupo/subgrupo a partir dos códigos
         prod = prod.merge(self.d["grupos"].rename(columns={"codigo": "grupo_codigo", "descricao": "grupo"}),
@@ -105,11 +122,46 @@ class MotorCustos:
         prod["subgrupo"] = prod["subgrupo"].fillna("(subgrupo " + prod["subgrupo_codigo"].astype(str) + ")")
         prod["custo_mp"] = prod["codigo"].map(self.linhas_mp.groupby("produto_codigo")["custo"].sum()).fillna(0.0)
         prod["custo_mo"] = prod["codigo"].map(self.linhas_mo.groupby("produto_codigo")["custo"].sum()).fillna(0.0)
-        prod["horas_mo"] = prod["codigo"].map(self.linhas_mo.groupby("produto_codigo")["horas"].sum()).fillna(0.0)
+        prod["horas_mo"] = prod["codigo"].map(
+            self.linhas_mo.groupby("produto_codigo")["horas_efetivas"].sum()).fillna(0.0)
         prod["custo_var_unit"] = self.var_unit
         prod["custo_direto"] = prod["custo_mp"] + prod["custo_mo"] + prod["custo_var_unit"]
         self._base = prod
         self._calcular_rateio()
+
+    def _encaixe(self, r):
+        """Peças por folha para linhas de base 'aproveitamento' (registra problemas)."""
+        if r.base != "aproveitamento":
+            return None
+        if pd.isna(r.largura_m) or pd.isna(r.comprimento_m):
+            self._problema(r.produto_codigo, f"{r.mp_codigo} sem dimensões de folha/chapa")
+            return None
+        if pd.isna(r.largura_cm) or pd.isna(r.altura_cm):
+            self._problema(r.produto_codigo, "produto sem dimensões")
+            return None
+        e = pecas_por_folha(100 * r.largura_m, 100 * r.comprimento_m, r.largura_cm, r.altura_cm,
+                            r.espacamento_cm or 0.0, r.margem_cm or 0.0)
+        if e.pecas == 0:
+            self._problema(r.produto_codigo, f"produto não cabe na folha de {r.mp_codigo}")
+        return e
+
+    def _fator(self, df: pd.DataFrame) -> pd.Series:
+        """Multiplicador da quantidade conforme a base de cálculo e as dimensões do produto."""
+        area = df["largura_cm"] * df["altura_cm"] / 10_000
+        perim = 2 * (df["largura_cm"] + df["altura_cm"]) / 100
+        pecas = df["pecas_folha"].replace(0, np.nan) if "pecas_folha" in df else np.nan
+        fator = pd.Series(np.select(
+            [df["base"] == "unidade", df["base"] == "area", df["base"] == "perimetro", df["base"] == "aproveitamento"],
+            [1.0, area, perim, 1 / pecas], default=np.nan), index=df.index, dtype="float64")
+        sem_dim = df["base"].isin(["area", "perimetro"]) & fator.isna()
+        for cod in df.loc[sem_dim, "produto_codigo"].unique():
+            self._problema(cod, "produto sem dimensões")
+        return fator
+
+    def _problema(self, produto: str, msg: str) -> None:
+        lista = self.problemas.setdefault(produto, [])
+        if msg not in lista:
+            lista.append(msg)
 
     def _calcular_rateio(self) -> None:
         metodo = self.p["metodo_rateio"]
@@ -192,7 +244,7 @@ class MotorCustos:
         return df.reset_index(drop=True)
 
     def _alertas_produto(self, r: pd.Series) -> str:
-        a = []
+        a = list(self.problemas.get(r["codigo"], []))
         if r["custo_mp"] == 0:
             a.append("sem ficha de matéria-prima")
         if r["custo_mo"] == 0:
@@ -214,10 +266,13 @@ class MotorCustos:
         return {
             "resultado": linha.iloc[0],
             "materias_primas": self.linhas_mp.loc[self.linhas_mp["produto_codigo"] == codigo,
-                                                  ["mp_codigo", "descricao", "unidade", "quantidade", "perda_pct",
-                                                   "qtd_com_perda", "custo_unitario", "custo"]],
+                                                  ["mp_codigo", "descricao", "origem", "base", "quantidade",
+                                                   "pecas_folha", "disposicao", "aproveitamento_pct", "consumo",
+                                                   "perda_pct", "qtd_com_perda", "unidade", "custo_unitario",
+                                                   "custo"]],
             "mao_de_obra": self.linhas_mo.loc[self.linhas_mo["produto_codigo"] == codigo,
-                                              ["mo_codigo", "funcao", "horas", "custo_hora", "custo"]],
+                                              ["mo_codigo", "funcao", "origem", "base", "horas", "horas_efetivas",
+                                               "custo_hora", "custo"]],
             "concorrentes": self.d["concorrentes"].loc[self.d["concorrentes"]["produto_codigo"] == codigo],
         }
 
@@ -277,7 +332,7 @@ class MotorCustos:
 
         uso = (self.linhas_mo.assign(vol=self.linhas_mo["produto_codigo"].map(
             tab.set_index("codigo")["volume_mensal"]).fillna(0))
-            .assign(horas_previstas=lambda x: x["horas"] * x["vol"])
+            .assign(horas_previstas=lambda x: x["horas_efetivas"] * x["vol"])
             .groupby("mo_codigo")["horas_previstas"].sum())
         ocup = self.mo[["codigo", "funcao", "quantidade", "capacidade_horas", "custo_hora", "custo_mensal_total"]].copy()
         ocup["horas_previstas"] = ocup["codigo"].map(uso).fillna(0.0)

@@ -100,6 +100,18 @@ def validar(df: pd.DataFrame, esquema: Esquema | str) -> tuple[pd.DataFrame, lis
         df["tipo"] = tipo
         invalidas |= ruins
 
+    if "base" in esq.nomes:
+        from .modelos import ALIASES_BASE, BASES_CALCULO, BASES_MO
+        permitidas = BASES_MO if esq.tabela in ("produto_mao_de_obra", "mo_subgrupo") else tuple(BASES_CALCULO)
+        base = df["base"].astype(str).str.strip().str.lower()
+        base = base.map(lambda b: ALIASES_BASE.get(b, b))
+        ruins = ~base.isin(permitidas)
+        for idx in df[ruins].index:
+            erros.append(f"[{esq.tabela}] linha {_linha(idx)}: base '{df.at[idx, 'base']}' inválida "
+                         f"(use {', '.join(permitidas)})")
+        df["base"] = base
+        invalidas |= ruins
+
     df = df[~invalidas]
 
     dup = df.duplicated(subset=list(esq.chave), keep="last")
@@ -122,10 +134,13 @@ def checar_referencias(dados: dict[str, pd.DataFrame]) -> tuple[dict[str, pd.Dat
         ok = pd.Series(True, index=df.index)
         for col, alvo in esq.referencias.items():
             t_alvo, c_alvo = alvo.split(".")
-            validos = set(saida.get(t_alvo, ESQUEMAS[t_alvo].vazio())[c_alvo].astype(str))
-            orfas = ~df[col].astype(str).isin(validos)
-            for v in sorted(set(df.loc[orfas, col].astype(str))):
-                erros.append(f"[{tabela}] '{col}' = {v} não existe em {t_alvo}; linhas ignoradas")
+            cols, cols_alvo = (list(col), c_alvo.split(",")) if isinstance(col, tuple) else ([col], [c_alvo])
+            base_alvo = saida.get(t_alvo, ESQUEMAS[t_alvo].vazio())
+            validos = set(base_alvo[cols_alvo].astype(str).agg("/".join, axis=1)) if not base_alvo.empty else set()
+            chaves = df[cols].astype(str).agg("/".join, axis=1) if not df.empty else pd.Series(dtype=str)
+            orfas = ~chaves.isin(validos)
+            for v in sorted(set(chaves[orfas])):
+                erros.append(f"[{tabela}] {'/'.join(cols)} = {v} não existe em {t_alvo}; linhas ignoradas")
             ok &= ~orfas
         saida[tabela] = df[ok].reset_index(drop=True)
     return saida, erros

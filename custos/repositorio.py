@@ -184,10 +184,12 @@ class Repositorio:
         dados = self.carregar_tudo()
         if novo in set(dados["grupos"]["codigo"]):
             raise ValueError(f"Já existe um grupo com o código {novo}.")
-        for t, col in (("grupos", "codigo"), ("subgrupos", "grupo_codigo"), ("produtos", "grupo_codigo")):
+        tabelas = (("grupos", "codigo"), ("subgrupos", "grupo_codigo"), ("composicao_subgrupo", "grupo_codigo"),
+                   ("mo_subgrupo", "grupo_codigo"), ("produtos", "grupo_codigo"))
+        for t, col in tabelas:
             dados[t].loc[dados[t][col] == antigo, col] = novo
         n = int((dados["produtos"]["grupo_codigo"] == novo).sum())
-        self.importar({t: dados[t] for t in ("grupos", "subgrupos", "produtos")}, modo="substituir")
+        self.importar({t: dados[t] for t, _ in tabelas}, modo="substituir")
         return n
 
     def alterar_codigo_subgrupo(self, grupo: str, antigo: str, novo: str) -> int:
@@ -199,7 +201,11 @@ class Repositorio:
         sg.loc[(sg["grupo_codigo"] == grupo) & (sg["codigo"] == antigo), "codigo"] = novo
         mp = (p["grupo_codigo"] == grupo) & (p["subgrupo_codigo"] == antigo)
         p.loc[mp, "subgrupo_codigo"] = novo
-        self.importar({"subgrupos": sg, "produtos": p}, modo="substituir")
+        for t in ("composicao_subgrupo", "mo_subgrupo"):
+            f = dados[t]
+            f.loc[(f["grupo_codigo"] == grupo) & (f["subgrupo_codigo"] == antigo), "subgrupo_codigo"] = novo
+        self.importar({"subgrupos": sg, "composicao_subgrupo": dados["composicao_subgrupo"],
+                       "mo_subgrupo": dados["mo_subgrupo"], "produtos": p}, modo="substituir")
         return int(mp.sum())
 
     def excluir_tudo(self) -> None:

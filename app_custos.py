@@ -17,7 +17,7 @@ import streamlit as st
 from custos import ESQUEMAS, METODOS_RATEIO, ORDEM_TABELAS, MotorCustos, Repositorio
 from custos import configuracao as cfg
 from custos.calculo import brl
-from custos.modelos import GRUPO_PADRAO_COD, SUBGRUPO_PADRAO_COD
+from custos.modelos import BASES_CALCULO, BASES_MO, GRUPO_PADRAO_COD, SUBGRUPO_PADRAO_COD
 from custos.repositorio import SomenteLeitura
 from custos.trava import TravaEdicao
 from custos.exemplo import dados_exemplo
@@ -107,6 +107,15 @@ def config_colunas(tabela: str, opcoes: dict[str, list[str]] | None = None) -> d
         rotulo = c.nome.replace("_", " ").capitalize() + (" *" if c.obrigatoria else "")
         if opcoes and c.nome in opcoes:
             cfg[c.nome] = st.column_config.SelectboxColumn(rotulo, options=opcoes[c.nome], required=c.obrigatoria, help=c.descricao)
+        elif c.nome == "base":
+            bases = list(BASES_MO) if tabela in ("produto_mao_de_obra", "mo_subgrupo") else list(BASES_CALCULO)
+            cfg[c.nome] = st.column_config.SelectboxColumn(
+                "Base de cálculo", options=bases, default="unidade",
+                help=" · ".join(f"{b}: {BASES_CALCULO[b]}" for b in bases))
+        elif c.nome.endswith("_cm") or c.nome.endswith("_m"):
+            un = "cm" if c.nome.endswith("_cm") else "m"
+            cfg[c.nome] = st.column_config.NumberColumn(rotulo.replace(f" {un}", f" ({un})"), min_value=0,
+                                                        format=f"%.2f {un}", help=c.descricao)
         elif c.tipo == "real":
             fmt = "%.2f %%" if c.nome.endswith("_pct") else "%.4f"
             cfg[c.nome] = st.column_config.NumberColumn(rotulo, min_value=c.minimo, format=fmt, help=c.descricao)
@@ -387,31 +396,102 @@ def pagina_ficha() -> None:
         st.dataframe(d["concorrentes"], hide_index=True, width="stretch")
 
 
+def _editor_ficha(tabela: str, fixos: dict, opcoes: dict, key: str) -> None:
+    """Editor das linhas de uma ficha (filtradas por `fixos`), preservando as demais ao salvar."""
+    tudo = repo.carregar(tabela)
+    mask = pd.Series(True, index=tudo.index)
+    for col, val in fixos.items():
+        mask &= tudo[col] == val
+    vis = tudo[mask].drop(columns=list(fixos))
+    cfg = {k: v for k, v in config_colunas(tabela, opcoes).items() if k not in fixos}
+    ed = st.data_editor(vis, num_rows="dynamic", hide_index=True, width="stretch", column_config=cfg, key=key)
+    if st.button("💾 Salvar", key=f"s_{key}", type="primary", disabled=not EDITA):
+        novo = pd.concat([tudo[~mask], ed.assign(**fixos)], ignore_index=True)
+        st.session_state["_avisos"] = repo.salvar(tabela, novo)   # exibidos após recarregar a página
+        st.rerun()
+
+
 def pagina_ficha_tecnica() -> None:
-    st.header("Ficha técnica do produto")
-    prod = repo.carregar("produtos")
-    if prod.empty:
-        st.info("Cadastre produtos primeiro.")
-        return
-    rotulos = dict(zip(prod["codigo"], prod["codigo"] + " — " + prod["descricao"]))
-    cod = st.selectbox("Produto", list(rotulos), format_func=rotulos.get)
+    st.header("Ficha técnica")
+    with st.expander("Como o consumo é calculado (bases de cálculo)", expanded=False):
+        st.markdown("""
+| Base | Consumo por unidade de produto | Exemplo |
+|---|---|---|
+| `unidade` | quantidade | embalagem: 1 un |
+| `area` | quantidade × largura × altura do produto (m²) | impressão por m², 2 = frente e verso |
+| `perimetro` | quantidade × 2 × (largura + altura) (m) | corte por metro linear |
+| `aproveitamento` | quantidade ÷ peças por folha | papel 1×2 m, recorte 15×15 cm → 78 peças/folha |
+
+No **aproveitamento**, o custo unitário da matéria-prima é o preço da **folha inteira**, e a folha precisa ter
+largura e comprimento cadastrados. As peças por folha consideram as duas orientações, a margem da folha e o
+espaço entre peças; a sobra é aproveitada com peças giradas quando possível.
+
+A **ficha padrão do subgrupo** vale para todos os produtos dele. Na ficha do produto, uma linha com o mesmo
+item **substitui** a do subgrupo, e **quantidade 0 exclui** o item herdado.
+""")
     mp = repo.carregar("materias_primas")
     mo = repo.carregar("mao_de_obra")
+    op_mp = {"mp_codigo": mp["codigo"].tolist()}
+    op_mo = {"mo_codigo": mo["codigo"].tolist()}
+    legenda_mp = ", ".join(mp["codigo"] + " = " + mp["descricao"])
+    legenda_mo = ", ".join(mo["codigo"] + " = " + mo["funcao"])
+    aba_s, aba_p = st.tabs(["📐 Padrão do subgrupo", "📦 Ajustes do produto"])
 
-    for tabela, catalogo, col, rot in [("composicao", mp, "mp_codigo", "descricao"),
-                                       ("produto_mao_de_obra", mo, "mo_codigo", "funcao")]:
-        st.subheader(ESQUEMAS[tabela].titulo)
-        tudo = repo.carregar(tabela)
-        filtro = tudo[tudo["produto_codigo"] == cod].drop(columns="produto_codigo")
-        st.caption("Disponíveis: " + ", ".join(catalogo["codigo"] + " = " + catalogo[rot]) if not catalogo.empty
-                   else "Nenhum item cadastrado.")
-        cfg = {k: v for k, v in config_colunas(tabela, {col: catalogo["codigo"].tolist()}).items()
-               if k != "produto_codigo"}
-        ed = st.data_editor(filtro, num_rows="dynamic", hide_index=True, width="stretch",
-                            column_config=cfg, key=f"ft_{tabela}_{cod}")
-        if st.button("💾 Salvar", key=f"sft_{tabela}_{cod}", type="primary", disabled=not EDITA):
-            novo = pd.concat([tudo[tudo["produto_codigo"] != cod], ed.assign(produto_codigo=cod)], ignore_index=True)
-            mostrar_avisos(repo.salvar(tabela, novo))
+    with aba_s:
+        _, rs = rotulos_grupos()
+        if not rs:
+            st.info("Cadastre subgrupos primeiro.")
+        else:
+            chave = st.selectbox("Subgrupo", list(rs), format_func=rs.get, key="ft_sub")
+            g, sg = chave
+            m = motor()
+            tab = m.tabela_precos()
+            do_sub = tab[(tab["grupo_codigo"] == g) & (tab["subgrupo_codigo"] == sg)]
+            st.markdown("**Matérias-primas, insumos e serviços**")
+            st.caption(legenda_mp)
+            _editor_ficha("composicao_subgrupo", {"grupo_codigo": g, "subgrupo_codigo": sg}, op_mp, f"fs_mp_{g}_{sg}")
+            st.markdown("**Mão de obra**")
+            st.caption(legenda_mo)
+            _editor_ficha("mo_subgrupo", {"grupo_codigo": g, "subgrupo_codigo": sg}, op_mo, f"fs_mo_{g}_{sg}")
+            st.markdown(f"**Resultado nos {len(do_sub)} produto(s) do subgrupo**")
+            if do_sub.empty:
+                st.caption("Nenhum produto neste subgrupo.")
+            else:
+                ap = (m.linhas_mp[m.linhas_mp["base"] == "aproveitamento"]
+                      .drop_duplicates("produto_codigo").set_index("produto_codigo"))
+                res = do_sub[["codigo", "descricao", "largura_cm", "altura_cm", "custo_mp", "custo_mo",
+                              "custo_direto", "preco_sugerido", "alertas"]].copy()
+                res.insert(4, "pecas_folha", res["codigo"].map(ap["pecas_folha"]))
+                res.insert(5, "aproveitamento_pct", res["codigo"].map(ap["aproveitamento_pct"]))
+                st.dataframe(res, hide_index=True, width="stretch", column_config={
+                    "largura_cm": st.column_config.NumberColumn("Larg. (cm)", format="%.1f"),
+                    "altura_cm": st.column_config.NumberColumn("Alt. (cm)", format="%.1f"),
+                    "pecas_folha": st.column_config.NumberColumn("Peças/folha", format="%d"),
+                    "aproveitamento_pct": st.column_config.NumberColumn("Aproveit.", format="%.1f %%"),
+                    **{c: st.column_config.NumberColumn(c.replace("_", " ").capitalize(), format="R$ %.4f")
+                       for c in ["custo_mp", "custo_mo", "custo_direto", "preco_sugerido"]}})
+
+    with aba_p:
+        prod = repo.carregar("produtos")
+        if prod.empty:
+            st.info("Cadastre produtos primeiro.")
+            return
+        rotulos = dict(zip(prod["codigo"], prod["codigo"] + " — " + prod["descricao"]))
+        cod = st.selectbox("Produto", list(rotulos), format_func=rotulos.get, key="ft_prod")
+        p = prod.set_index("codigo").loc[cod]
+        dims = (f"{p['largura_cm']:g} × {p['altura_cm']:g} cm" if pd.notna(p["largura_cm"]) and pd.notna(p["altura_cm"])
+                else "⚠️ sem dimensões (cadastre em Produtos)")
+        _, rs = rotulos_grupos()
+        st.caption(f"Subgrupo: {rs.get((p['grupo_codigo'], p['subgrupo_codigo']), '—')} · Dimensões: {dims}")
+        d = motor().detalhar(cod)
+        st.markdown("**Ficha efetiva (usada no cálculo)**")
+        st.dataframe(d["materias_primas"].round(4), hide_index=True, width="stretch")
+        st.dataframe(d["mao_de_obra"].round(4), hide_index=True, width="stretch")
+        st.markdown("**Itens próprios deste produto** (substituem os do subgrupo; quantidade 0 exclui)")
+        st.caption(legenda_mp)
+        _editor_ficha("composicao", {"produto_codigo": cod}, op_mp, f"fp_mp_{cod}")
+        st.caption(legenda_mo)
+        _editor_ficha("produto_mao_de_obra", {"produto_codigo": cod}, op_mo, f"fp_mo_{cod}")
 
 
 def pagina_parametros() -> None:
@@ -605,6 +685,9 @@ with st.sidebar:
     pagina = st.radio("Navegação", list(PAGINAS), label_visibility="collapsed")
     st.divider()
     painel_trava()
+
+if "_avisos" in st.session_state:
+    mostrar_avisos(st.session_state.pop("_avisos"))
 
 try:
     PAGINAS[pagina]()
