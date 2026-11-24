@@ -1,6 +1,7 @@
 # Litoarte v2 — Composição de Custos e Formação de Preço de Venda
 
-> Branch `v2` em desenvolvimento. A versão em uso (v1, Streamlit) continua na branch `main`.
+> Branch `v2`: as quatro fases da especificação estão concluídas. A v1 (Streamlit) continua na
+> branch `main` até a junção.
 
 Especificação completa: [docs/especificacao_v2.md](docs/especificacao_v2.md) (modelo de dados,
 fluxo de telas e motor de precificação).
@@ -12,7 +13,7 @@ fluxo de telas e motor de precificação).
 | 1 | Schema relacional + migrações (Alembic) + motor de precificação + testes | ✅ concluída |
 | 2 | Cadastros base (CRUD) + importação/modelos CSV/XLSX + interface NiceGUI | ✅ concluída |
 | 3 | Tela de Composição (NiceGUI) + simulador + clonagem | ✅ concluída |
-| 4 | Cascata/relatório de impacto, lista de produtos, exportações | ⏳ |
+| 4 | Relatório de impacto, histórico de custos, exportações, revisão final | ✅ concluída |
 
 ## Como usar (Windows)
 
@@ -54,6 +55,21 @@ Linux/macOS: `./setup.sh && .venv/bin/python -m litoarte`.
   SKU, nome, subgrupo e medidas antes de abrir a cópia.
 
 Campos numéricos aceitam o formato brasileiro (`139,90`, `1.234,56`) e também `139.90`.
+Ao sair da composição com alterações não salvas, o navegador pede confirmação.
+
+### Reajustes e relatórios
+
+- **Relatório de impacto**: ao salvar um novo custo de matéria-prima ou de mão de obra (na tela ou
+  por importação), o sistema lista os produtos afetados com preço sugerido antes → depois, variação,
+  e margem real no preço praticado antes → depois, destacando os que ficam abaixo da margem
+  desejada. O preço praticado nunca é alterado automaticamente. Exportável em XLSX.
+- **Histórico de custos** (menu): todos os reajustes de insumos e mão de obra, com data, valor
+  anterior, novo, variação e origem (manual/importação).
+- **Exportações** (Produtos → Planilhas): *tabela de preços* (custos, parcelas do preço, preço
+  sugerido, mínimo, praticado, margem real e **preço sugerido em cada perfil de venda**) e
+  *composição detalhada* (cada linha da ficha técnica de cada produto com quantidade efetiva,
+  perda, custo unitário e custo).
+- **Início**: total de produtos ativos e quantos estão com margem abaixo da desejada.
 
 Em toda tela de cadastro: busca, inativar/ativar, excluir (bloqueado se o item estiver em uso),
 **Importar** (assistente), **Modelo** (planilha com instruções e listas de valores) e **Exportar**
@@ -81,7 +97,7 @@ litoarte/
 ├── migracoes.py            atualizar_banco(): aplica as migrações por código
 ├── migrations/             Alembic: 0001 schema · 0002 dados de referência
 ├── app/                    interface NiceGUI: layout, telas, cadastro genérico, importação, composição
-├── planilhas/              leitura XLSX/CSV, modelos/exportação, importação (analisar → aplicar)
+├── planilhas/              leitura XLSX/CSV, modelos/exportação, importação, relatórios XLSX
 └── domain/
     ├── models.py           17 tabelas, CHECK/UNIQUE/FK, histórico automático de custos
     ├── pricing/            motor puro: engine.py (seção 3) e encaixe.py (peças por folha)
@@ -91,6 +107,7 @@ litoarte/
         ├── perfis.py       perfis de venda (canais)
         ├── configuracao.py rateio, margem, perda
         ├── composicao.py   rascunho, cálculo em tempo real, gravação, clonagem, canais, lista
+        ├── impacto.py      preços antes/depois de um reajuste (atualização em cascata)
         └── precificacao.py banco → motor; cálculo por produto/todos; produtos afetados
 tests/                      motor, banco, cadastros, importação e interface (simulação NiceGUI)
 ```

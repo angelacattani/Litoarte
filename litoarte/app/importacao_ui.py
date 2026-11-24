@@ -11,6 +11,7 @@ from ..planilhas.importacao import aplicar, analisar
 from ..planilhas.modelos import gerar_modelo
 from . import estado
 from .formatos import brl, num
+from .impacto_ui import tabela_impacto
 
 ROTULO_MODO = {"ambos": "Incluir novos e atualizar existentes", "inserir": "Só incluir novos",
                "atualizar": "Só atualizar existentes (ex.: reajuste de preços)"}
@@ -120,10 +121,9 @@ def abrir_importacao(chave: str, ao_concluir: Callable[[], None] | None = None) 
                                   (("chave", "Item", "left"), ("antes", "Antes", "right"),
                                    ("depois", "Depois", "right"), ("var", "Variação", "right"))]) \
                     .props("flat dense bordered")
-            if r.produtos_afetados:
-                ui.label(f"{len(r.produtos_afetados)} produto(s) com custo recalculado: "
-                         + ", ".join(r.produtos_afetados[:30]) + (" ..." if len(r.produtos_afetados) > 30 else "")) \
-                    .classes("text-caption")
+            if r.impacto:
+                ui.label(f"Impacto nos produtos ({len(r.impacto)}):").classes("text-weight-medium")
+                tabela_impacto(r.impacto)
         ui.notify("Importação concluída.", type="positive")
         if ao_concluir:
             ao_concluir()

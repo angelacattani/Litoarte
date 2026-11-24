@@ -8,6 +8,7 @@ from nicegui import ui
 
 from ..domain.services import composicao as C
 from ..domain.services.cadastros import MODULOS
+from ..planilhas import relatorios as R
 from ..planilhas.modelos import exportar, gerar_modelo
 from . import estado
 from .composicao_ui import abrir_clonagem
@@ -53,8 +54,11 @@ class TelaProdutos:
             ui.switch("só margem abaixo", on_change=lambda e: self._f("abaixo", e.value)).props("dense")
             ui.space()
             ui.button("Novo produto", icon="add", on_click=lambda: ui.navigate.to("/produtos/novo")).mark("novo-produto")
-            with ui.button("Planilhas", icon="table_view").props("outline"):
+            with ui.button("Planilhas", icon="table_view").props("outline").mark("menu-planilhas"):
                 with ui.menu():
+                    ui.menu_item("Exportar tabela de preços", self._exportar_precos).mark("exportar-precos")
+                    ui.menu_item("Exportar composição detalhada", self._exportar_composicao)
+                    ui.separator()
                     for chave, rotulo in (("produtos", "produtos"), ("ficha_materiais", "ficha — materiais"),
                                           ("ficha_mao_de_obra", "ficha — mão de obra")):
                         ui.menu_item(f"Importar {rotulo}", lambda c=chave: abrir_importacao(c, ao_concluir=self.atualizar))
@@ -138,6 +142,16 @@ class TelaProdutos:
                     self.atualizar()
                 ui.button("Excluir", color="negative", on_click=ok)
         dlg.open()
+
+    def _exportar_precos(self):
+        with estado.sessao() as s:
+            conteudo = R.xlsx({"Tabela de preços": R.tabela_precos(s, apenas_ativos=not self.filtro["inativos"])})
+        ui.download(conteudo, f"tabela_precos_{date.today().isoformat()}.xlsx")
+
+    def _exportar_composicao(self):
+        with estado.sessao() as s:
+            conteudo = R.xlsx({"Composição": R.composicao_detalhada(s, apenas_ativos=not self.filtro["inativos"])})
+        ui.download(conteudo, f"composicao_detalhada_{date.today().isoformat()}.xlsx")
 
     def _exportar(self, chave):
         with estado.sessao() as s:

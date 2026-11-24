@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from nicegui import ui
 
-from ..domain.models import MODOS_QTD
 from ..domain.services import composicao as C
 from ..domain.services.cadastros import ErroValidacao
 from . import estado
@@ -88,7 +87,7 @@ class TelaComposicao:
 
     # ------------------------------------------------------------------ montagem
     def render(self) -> None:
-        r, cat = self.r, self.cat
+        r = self.r
         with ui.row().classes("w-full items-center"):
             ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/produtos")).props("flat round")
             self.titulo = ui.label().classes("text-h6")
@@ -122,6 +121,11 @@ class TelaComposicao:
     def _atualizar_titulo(self):
         self.titulo.text = f"{self.r.sku or 'Novo produto'}" + (f" — {self.r.nome}" if self.r.nome else "")
         self.chip_sujo.set_visibility(self.sujo)
+        # o navegador pede confirmação ao sair/fechar enquanto houver alterações não salvas
+        if self.sujo != getattr(self, "_aviso_saida", False):
+            self._aviso_saida = self.sujo
+            ui.run_javascript("window.onbeforeunload = (e) => { e.preventDefault(); return ''; };" if self.sujo
+                              else "window.onbeforeunload = null;")
 
     def _mudou(self, recalcular: bool = True):
         self.sujo = True
@@ -501,6 +505,8 @@ class TelaComposicao:
                 def ok():
                     with estado.sessao() as s:
                         C.excluir(s, self.r.id)
+                    self.sujo = False
+                    self._atualizar_titulo()
                     dlg.close()
                     ui.notify("Produto excluído.", type="positive")
                     ui.navigate.to("/produtos")

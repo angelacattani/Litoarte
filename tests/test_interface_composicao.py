@@ -1,7 +1,6 @@
 """Interface da fase 3: lista de produtos, composição em tempo real, simulador e clonagem."""
 
 import pytest
-from nicegui import ui
 from nicegui.testing import User
 from sqlalchemy import select
 

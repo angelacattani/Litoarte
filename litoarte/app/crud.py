@@ -12,7 +12,8 @@ from typing import Callable
 from nicegui import ui
 from sqlalchemy import select
 
-from ..domain.services import cadastros as C
+from ..domain.services import cadastros as C, impacto
+from .impacto_ui import mostrar_impacto
 from ..planilhas.modelos import exportar, gerar_modelo
 from . import estado
 from .campos import campo_numero, ler
@@ -198,7 +199,8 @@ class TelaCadastro:
             el.props(remove="error error-message")
         try:
             with estado.sessao() as s:
-                C.gravar(s, self.modulo, bruto, id_edicao=id_edicao, vazios_apagam=id_edicao is not None)
+                _, linhas_impacto = impacto.gravar_com_impacto(s, self.modulo, bruto, id_edicao=id_edicao,
+                                                               vazios_apagam=id_edicao is not None)
         except C.ErroValidacao as e:
             gerais = []
             for campo, msg in e.erros:
@@ -213,6 +215,8 @@ class TelaCadastro:
         dlg.close()
         ui.notify("Registro salvo.", type="positive")
         self._mudou()
+        if linhas_impacto:
+            mostrar_impacto(linhas_impacto, "Impacto do reajuste nos produtos")
 
     # ------------------------------------------------------------------ ações de linha
     def _alternar_ativo(self, linha: dict) -> None:

@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..domain.models import FichaMO, FichaMP, ImportacaoLog, MaoDeObra, MateriaPrima, Produto
+from ..domain.services import impacto
 from ..domain.services.cadastros import MODULOS, ErroValidacao, Modulo, gravar, validar_registro
 from .leitura import linhas_do_arquivo
 
@@ -61,6 +62,7 @@ class ResultadoImportacao:
     ignoradas: int
     reajustes: list[tuple[str, float | None, float]]     # (chave, custo anterior, custo novo)
     produtos_afetados: list[str]
+    impacto: list = field(default_factory=list)          # LinhaImpacto: preço antes/depois por produto
 
 
 def _texto_chave(modulo: Modulo, bruto: dict) -> str:
@@ -110,6 +112,13 @@ def aplicar(sessao: Session, analise: Analise, usuario: str | None = None) -> Re
         raise ErroValidacao([("", "a análise contém erros ou nada a gravar; corrija o arquivo e analise de novo")])
     modulo = MODULOS[analise.modulo]
     custo_attr = {"materias_primas": ("custo_compra", MateriaPrima), "mao_de_obra": ("custo_hora", MaoDeObra)}
+    # fotografa os preços dos produtos que usam os itens a atualizar (relatório de impacto)
+    fotos = {}
+    if analise.modulo in custo_attr:
+        ids = [validar_registro(sessao, modulo, la.bruto)[1].id for la in analise.linhas if la.acao == "atualizar"]
+        prod = impacto.produtos_com_insumos(sessao, ids) if analise.modulo == "materias_primas" \
+            else impacto.produtos_com_etapas(sessao, ids)
+        fotos = impacto.fotografar(sessao, prod)
     reajustes: list[tuple[str, float | None, float]] = []
     alterados: list[int] = []
     ins = atu = 0
@@ -140,6 +149,7 @@ def aplicar(sessao: Session, analise: Analise, usuario: str | None = None) -> Re
             else (FichaMO, FichaMO.mao_de_obra_id)
         afetados = list(sessao.scalars(select(Produto.sku).join(ficha).where(col.in_(alterados))
                                        .distinct().order_by(Produto.sku)))
+    linhas_impacto = impacto.comparar(sessao, fotos) if fotos else []
     c = analise.contagem()
     sessao.add(ImportacaoLog(modulo=analise.modulo, arquivo=analise.arquivo[:255], modo=analise.modo,
                              linhas_lidas=len(analise.linhas), inseridas=ins, atualizadas=atu,
@@ -148,4 +158,4 @@ def aplicar(sessao: Session, analise: Analise, usuario: str | None = None) -> Re
                                                   "colunas_ignoradas": analise.colunas_ignoradas},
                                                  ensure_ascii=False)))
     sessao.flush()
-    return ResultadoImportacao(ins, atu, c["ignorar"], reajustes, afetados)
+    return ResultadoImportacao(ins, atu, c["ignorar"], reajustes, afetados, linhas_impacto)

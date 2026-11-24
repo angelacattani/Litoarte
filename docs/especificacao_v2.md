@@ -2,8 +2,9 @@
 
 Especificação técnica (fase de projeto): modelo de dados, fluxo de telas e motor de precificação.
 Status: **aprovada** (branch `v2`). Decisões: NiceGUI (Python) · perda parametrizável · cadastro começa
-do zero · desenvolvimento na branch `v2` até a conclusão. **Fases 1, 2 e 3 concluídas** (schema, migrações,
-motor, cadastros, importação, interface, composição de preço, simulador e clonagem).
+do zero · desenvolvimento na branch `v2` até a conclusão. **Fases 1 a 4 concluídas** (schema, migrações,
+motor, cadastros, importação, interface, composição de preço, simulador, clonagem, relatório de impacto,
+histórico e exportações).
 
 ---
 

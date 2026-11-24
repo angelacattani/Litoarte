@@ -45,8 +45,10 @@ class Base(DeclarativeBase):
 
 
 class ComDatas:
-    criado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    atualizado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    # default em Python (horário local da máquina do sistema); o CURRENT_TIMESTAMP do SQLite é UTC
+    criado_em: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, server_default=func.now())
+    atualizado_em: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, server_default=func.now(),
+                                                    onupdate=datetime.now)
 
 
 # ---------------------------------------------------------------------------- apoio
@@ -113,7 +115,7 @@ class HistoricoCustoMP(Base):
     custo_anterior: Mapped[float | None] = mapped_column(Num)
     custo_novo: Mapped[float] = mapped_column(Num)
     origem: Mapped[str] = mapped_column(String(20), default="manual")
-    alterado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    alterado_em: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, server_default=func.now())
     materia_prima: Mapped[MateriaPrima] = relationship(back_populates="historico")
 
 
@@ -166,7 +168,7 @@ class HistoricoCustoMO(Base):
     custo_hora_anterior: Mapped[float | None] = mapped_column(Num)
     custo_hora_novo: Mapped[float] = mapped_column(Num)
     origem: Mapped[str] = mapped_column(String(20), default="manual")
-    alterado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    alterado_em: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, server_default=func.now())
     mao_de_obra: Mapped[MaoDeObra] = relationship(back_populates="historico")
 
 
@@ -343,7 +345,7 @@ class ImportacaoLog(Base):
     rejeitadas: Mapped[int] = mapped_column(Integer, default=0)
     usuario: Mapped[str | None] = mapped_column(String(80))
     detalhes: Mapped[str | None] = mapped_column(Text)
-    executado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    executado_em: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, server_default=func.now())
 
 
 # ---------------------------------------------------------------------------- histórico automático

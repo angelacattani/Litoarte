@@ -22,6 +22,7 @@ MENU = [
     ("Unidades de medida", "/unidades", "straighten"),
     ("Fornecedores", "/fornecedores", "local_shipping"),
     ("Configuração", "/configuracao", "tune"),
+    ("Histórico de custos", "/historico", "history"),
 ]
 
 CORES = {"primary": "#1f4e79", "secondary": "#5b7083", "accent": "#c27c0e", "positive": "#2e7d32",
