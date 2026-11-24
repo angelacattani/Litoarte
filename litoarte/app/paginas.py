@@ -10,6 +10,7 @@ from ..domain.services import configuracao as cfgsvc, perfis as perfsvc
 from ..domain.services.cadastros import ErroValidacao
 from ..domain.services.precificacao import configuracao, regras_empresa
 from . import estado
+from .campos import campo_numero
 from .crud import TelaCadastro
 from .formatos import brl, num, pct
 from .layout import moldura
@@ -67,8 +68,8 @@ def pagina_inicio():
                     ui.icon("check_circle" if feito else "radio_button_unchecked",
                             color="positive" if feito else "grey")
                     ui.link(texto, destino).classes("text-body1" + (" text-grey-7" if feito else ""))
-            ui.label("Produtos, ficha técnica e composição de preço chegam na fase 3.").classes(
-                "text-caption text-grey-7 q-mt-sm")
+            ui.link("Depois: cadastrar produtos e montar a composição de preço →", "/produtos").classes(
+                "text-body1 q-mt-sm")
 
 
 # ============================================================================ cadastros simples
@@ -257,16 +258,14 @@ def pagina_configuracao():
             ui.label(f"Custo fixo total mensal: {brl(r.custo_fixo_total)}").classes("text-caption text-grey-7")
             metodo = ui.radio(cfgsvc.ROTULOS_RATEIO, value=vals["metodo_rateio"]).props("dense").mark("metodo")
             with ui.grid(columns=3).classes("w-full gap-4"):
-                fat = ui.number("Faturamento base mensal (R$)", value=vals["faturamento_base_mensal"]) \
-                    .props("outlined dense clearable").mark("faturamento")
-                horas = ui.number("Capacidade de horas/mês", value=vals["capacidade_horas_mes"]) \
-                    .props(f'outlined dense clearable hint="vazio = soma das etapas ({num(auto_horas, 1) or "0"} h)"')
-                unid = ui.number("Capacidade de unidades/mês", value=vals["capacidade_unidades_mes"]) \
-                    .props("outlined dense clearable")
+                fat = campo_numero("Faturamento base mensal (R$)", vals["faturamento_base_mensal"]).mark("faturamento")
+                horas = campo_numero("Capacidade de horas/mês", vals["capacidade_horas_mes"]) \
+                    .props(f'hint="vazio = soma das etapas ({num(auto_horas, 1) or "0"} h)"')
+                unid = campo_numero("Capacidade de unidades/mês", vals["capacidade_unidades_mes"])
             ui.separator()
             ui.label("Margem e perda").classes("text-subtitle1 text-weight-medium")
-            margem = ui.number("Margem de lucro padrão (%)", value=vals["margem_padrao_pct"], min=0, max=99.99) \
-                .props('outlined dense hint="usada nos produtos sem margem própria"').classes("w-64").mark("margem")
+            margem = campo_numero("Margem de lucro padrão (%)", vals["margem_padrao_pct"]) \
+                .props('hint="usada nos produtos sem margem própria"').classes("w-64").mark("margem")
             perda = ui.radio(cfgsvc.ROTULOS_PERDA, value=vals["modo_perda"]).props("dense")
             ui.label("Com 10 % de perda: sobre o material comprado = fator 1,111; acréscimo = fator 1,100.") \
                 .classes("text-caption text-grey-7")
@@ -290,6 +289,30 @@ def pagina_configuracao():
                 ui.button("Salvar", icon="save", on_click=salvar).mark("salvar-config")
 
 
+# ============================================================================ produtos e composição
+def pagina_produtos():
+    from .produtos_ui import TelaProdutos
+    with moldura("Produtos", "/produtos"):
+        TelaProdutos().render()
+
+
+def pagina_composicao(pid: str):
+    from .composicao_ui import TelaComposicao
+    with moldura("Composição de preço", "/produtos"):
+        try:
+            produto_id = None if pid == "novo" else int(pid)
+            tela = TelaComposicao(produto_id)
+        except (ValueError, LookupError):
+            ui.label("Produto não encontrado.").classes("text-negative")
+            ui.link("Voltar para a lista", "/produtos")
+            return
+        if not tela.cat.subgrupos:
+            ui.label("Cadastre ao menos um grupo e subgrupo antes de criar produtos.").classes("text-warning")
+            ui.link("Ir para Grupos e subgrupos", "/grupos")
+            return
+        tela.render()
+
+
 # ============================================================================ registro
 ROTAS = {
     "/": pagina_inicio,
@@ -301,6 +324,8 @@ ROTAS = {
     "/unidades": pagina_unidades,
     "/fornecedores": pagina_fornecedores,
     "/configuracao": pagina_configuracao,
+    "/produtos": pagina_produtos,
+    "/produtos/{pid}": pagina_composicao,
 }
 
 

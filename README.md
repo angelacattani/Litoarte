@@ -11,7 +11,7 @@ fluxo de telas e motor de precificação).
 |---|---|---|
 | 1 | Schema relacional + migrações (Alembic) + motor de precificação + testes | ✅ concluída |
 | 2 | Cadastros base (CRUD) + importação/modelos CSV/XLSX + interface NiceGUI | ✅ concluída |
-| 3 | Tela de Composição (NiceGUI) + simulador + clonagem | ⏳ |
+| 3 | Tela de Composição (NiceGUI) + simulador + clonagem | ✅ concluída |
 | 4 | Cascata/relatório de impacto, lista de produtos, exportações | ⏳ |
 
 ## Como usar (Windows)
@@ -34,6 +34,26 @@ Linux/macOS: `./setup.sh && .venv/bin/python -m litoarte`.
 | Grupos e subgrupos | dois níveis, código do subgrupo único dentro do grupo |
 | Unidades, Fornecedores | cadastros de apoio |
 | Configuração | método de rateio, faturamento base, capacidades, margem padrão, modo de perda |
+| **Produtos** | lista com filtros (grupo, subgrupo, margem abaixo), custo direto, preço sugerido, preço praticado, margem real; abrir, **duplicar**, excluir; planilhas de produtos e fichas |
+| **Composição de preço** | ficha técnica (materiais e mão de obra) com custo por linha; formação do preço, simulador e comparativo por canal **em tempo real**, antes de salvar |
+
+### Composição de preço
+
+- Cabeçalho: SKU, nome, grupo › subgrupo, largura/altura, perfil de venda, margem desejada
+  (vazio = padrão) e preço praticado.
+- **Materiais**: insumo (busca por SKU/nome), modo (fixa, por área, por perímetro, aproveitamento de
+  folha), quantidade na unidade de consumo, perda própria (vazio = perda do insumo), espaçamento no
+  aproveitamento; mostra o custo de cada linha e, nas folhas, peças por folha e aproveitamento.
+- **Mão de obra**: etapa, tempo em minutos ou horas, custo de cada linha.
+- **Formação do preço**: materiais, mão de obra, custo direto, custo fixo, custos variáveis, lucro,
+  preço sugerido, markup, preço mínimo e de cobertura, margem no preço praticado e alertas.
+- **Simulador**: margem por controle deslizante (preço, lucro, margem de contribuição, ponto de
+  equilíbrio) com "aplicar ao produto"; ou preço manual com o resultado e "usar como preço praticado".
+- **Comparativo por canal**: preço sugerido e margem no preço praticado em cada perfil de venda.
+- **Duplicar**: cria um produto com o mesmo subgrupo, ficha técnica, perfil e margem; permite trocar
+  SKU, nome, subgrupo e medidas antes de abrir a cópia.
+
+Campos numéricos aceitam o formato brasileiro (`139,90`, `1.234,56`) e também `139.90`.
 
 Em toda tela de cadastro: busca, inativar/ativar, excluir (bloqueado se o item estiver em uso),
 **Importar** (assistente), **Modelo** (planilha com instruções e listas de valores) e **Exportar**
@@ -60,7 +80,7 @@ litoarte/
 ├── db.py                   engine, sessões, transação; FKs ligadas no SQLite
 ├── migracoes.py            atualizar_banco(): aplica as migrações por código
 ├── migrations/             Alembic: 0001 schema · 0002 dados de referência
-├── app/                    interface NiceGUI: layout, telas, cadastro genérico, assistente de importação
+├── app/                    interface NiceGUI: layout, telas, cadastro genérico, importação, composição
 ├── planilhas/              leitura XLSX/CSV, modelos/exportação, importação (analisar → aplicar)
 └── domain/
     ├── models.py           17 tabelas, CHECK/UNIQUE/FK, histórico automático de custos
@@ -70,6 +90,7 @@ litoarte/
         ├── valores.py      números BR, sim/não, opções
         ├── perfis.py       perfis de venda (canais)
         ├── configuracao.py rateio, margem, perda
+        ├── composicao.py   rascunho, cálculo em tempo real, gravação, clonagem, canais, lista
         └── precificacao.py banco → motor; cálculo por produto/todos; produtos afetados
 tests/                      motor, banco, cadastros, importação e interface (simulação NiceGUI)
 ```

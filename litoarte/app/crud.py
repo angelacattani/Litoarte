@@ -15,6 +15,7 @@ from sqlalchemy import select
 from ..domain.services import cadastros as C
 from ..planilhas.modelos import exportar, gerar_modelo
 from . import estado
+from .campos import campo_numero, ler
 from .formatos import num
 from .importacao_ui import abrir_importacao
 
@@ -139,7 +140,7 @@ class TelaCadastro:
         if c.tipo == "bool":
             el = ui.switch(rotulo, value=True if valor is None and not edicao else bool(valor))
         elif c.tipo == "numero":
-            el = ui.number(rotulo, value=valor).props("outlined dense clearable")
+            el = campo_numero(rotulo, valor)
         elif c.tipo == "opcao":
             el = ui.select(list(c.opcoes), label=rotulo, value=valor).props("outlined dense clearable")
         elif c.tipo == "ref":
@@ -169,20 +170,22 @@ class TelaCadastro:
         if "custo_hora" not in ctl or "custo_minuto" not in ctl:
             return
         h, m = ctl["custo_hora"], ctl["custo_minuto"]
-        if h.value is not None:
-            m.value = round(h.value / 60, 6)
+        if ler(h.value) is not None:
+            m.value = num(ler(h.value) / 60, 6)
         trava = {"ativa": False}
 
         def de_hora(e):
             if not trava["ativa"]:
                 trava["ativa"] = True
-                m.value = None if e.value is None else round(e.value / 60, 6)
+                v = ler(e.value)
+                m.value = "" if v is None else num(v / 60, 6)
                 trava["ativa"] = False
 
         def de_minuto(e):
             if not trava["ativa"]:
                 trava["ativa"] = True
-                h.value = None if e.value is None else round(e.value * 60, 4)
+                v = ler(e.value)
+                h.value = "" if v is None else num(v * 60, 4)
                 trava["ativa"] = False
 
         h.on_value_change(de_hora)

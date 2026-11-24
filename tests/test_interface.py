@@ -72,7 +72,7 @@ async def test_mao_de_obra_por_minuto(usuario, user: User):
     _valor(user, "campo-codigo", "CORTE")
     _valor(user, "campo-etapa", "Corte")
     _valor(user, "campo-custo_minuto", 0.45)
-    assert user.find(marker="campo-custo_hora").elements.pop().value == pytest.approx(27.0)
+    assert user.find(marker="campo-custo_hora").elements.pop().value == "27"
     user.find(marker="salvar-form").click()
     await user.should_see("Registro salvo.")
 
@@ -117,3 +117,17 @@ async def test_dialogo_de_importacao_abre(usuario, user: User):
     user.find("Importar").click()
     await user.should_see("Importar — Custos fixos")
     await user.should_see("Nada é gravado antes da confirmação.", retries=5)
+
+
+async def test_campo_numerico_aceita_virgula(usuario, user: User):
+    """Regressão: no navegador pt-BR, '139,90' em <input type=number> virava 13990."""
+    await user.open("/custos-fixos")
+    user.find(marker="novo-custos_fixos").click()
+    _valor(user, "campo-codigo", "NET")
+    _valor(user, "campo-descricao", "Internet")
+    _valor(user, "campo-valor_mensal", "1.234,56")
+    user.find(marker="salvar-form").click()
+    await user.should_see("Registro salvo.")
+    from litoarte.domain.models import CustoFixo
+    with estado.sessao() as s:
+        assert s.scalar(select(CustoFixo)).valor_mensal == pytest.approx(1234.56)

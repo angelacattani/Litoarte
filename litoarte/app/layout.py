@@ -11,6 +11,7 @@ from . import estado
 
 MENU = [
     ("Início", "/", "home"),
+    ("Produtos e composição", "/produtos", "calculate"),
     None,
     ("Matérias-primas", "/materias-primas", "inventory_2"),
     ("Mão de obra", "/mao-de-obra", "engineering"),
@@ -45,19 +46,12 @@ def moldura(titulo: str, rota: str):
                     ui.separator().classes("q-my-sm")
                     continue
                 nome, destino, icone = item
-                ativo = destino == rota
+                ativo = destino == rota or (destino != "/" and rota.startswith(destino + "/"))
                 with ui.item(on_click=lambda d=destino: ui.navigate.to(d)).props(
                         f'clickable {"active" if ativo else ""} active-class="bg-blue-1 text-primary"'):
                     with ui.item_section().props("avatar"):
                         ui.icon(icone)
                     ui.item_section(nome)
-            ui.separator().classes("q-my-sm")
-            with ui.item().props("disable"):
-                with ui.item_section().props("avatar"):
-                    ui.icon("calculate")
-                with ui.item_section():
-                    ui.item_label("Produtos e composição")
-                    ui.item_label("fase 3").props("caption")
     with ui.column().classes("w-full q-pa-md gap-4 max-w-screen-xl mx-auto"):
         ui.label(titulo).classes("text-h5 text-weight-medium text-grey-9")
         yield
