@@ -1,7 +1,7 @@
 # Litoarte v2 — Composição de Custos e Formação de Preço de Venda
 
-> Versão 2. A versão anterior (v1, Streamlit) está preservada na etiqueta
-> [`v1-final`](https://github.com/angelacattani/Litoarte/tree/v1-final).
+> Versão 2. A versão anterior (v1, Streamlit) está preservada no histórico, no commit
+> [`70b05b7`](https://github.com/angelacattani/Litoarte/tree/70b05b7) (Code → Download ZIP nessa página).
 
 Especificação completa: [docs/especificacao_v2.md](docs/especificacao_v2.md) (modelo de dados,
 fluxo de telas e motor de precificação).
