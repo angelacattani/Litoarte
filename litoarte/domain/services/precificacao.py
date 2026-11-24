@@ -74,14 +74,16 @@ _CARGA_FICHA = (
 
 
 def calcular_produto(sessao: Session, produto_id: int) -> ResultadoPreco:
-    produto = sessao.scalar(select(Produto).where(Produto.id == produto_id).options(*_CARGA_FICHA))
+    # populate_existing: o preço reflete sempre o estado atual do banco, mesmo com objetos já carregados
+    produto = sessao.scalar(select(Produto).where(Produto.id == produto_id).options(*_CARGA_FICHA)
+                            .execution_options(populate_existing=True))
     if produto is None:
         raise LookupError(f"produto {produto_id} não encontrado")
     return calcular(entrada_do_produto(produto, perfil_padrao(sessao)), regras_empresa(sessao))
 
 
 def calcular_todos(sessao: Session, apenas_ativos: bool = True) -> list[tuple[Produto, ResultadoPreco]]:
-    consulta = select(Produto).options(*_CARGA_FICHA).order_by(Produto.sku)
+    consulta = select(Produto).options(*_CARGA_FICHA).order_by(Produto.sku).execution_options(populate_existing=True)
     if apenas_ativos:
         consulta = consulta.where(Produto.ativo)
     regras, padrao = regras_empresa(sessao), perfil_padrao(sessao)
