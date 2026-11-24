@@ -15,8 +15,18 @@ def dados_exemplo() -> tuple[dict[str, pd.DataFrame], dict]:
             # papelaria: folha 1 × 2 m comprada inteira; impressão cobrada por folha impressa
             {"codigo": "PAP01", "descricao": "Papel couché 300g — folha 1×2 m", "unidade": "folha", "custo_unitario": 18.00,
              "largura_m": 1.0, "comprimento_m": 2.0, "margem_cm": 0.0, "fornecedor": "Papelaria E"},
-            {"codigo": "IMP01", "descricao": "Impressão digital colorida — folha 1×2 m", "unidade": "folha",
+            # impressão terceirizada (alternativa à impressão própria; não usada na ficha padrão)
+            {"codigo": "IMP01", "descricao": "Impressão terceirizada — folha 1×2 m", "unidade": "folha",
              "custo_unitario": 60.00, "largura_m": 1.0, "comprimento_m": 2.0, "margem_cm": 0.0, "fornecedor": "Gráfica F"},
+            # insumos comprados em embalagem e consumidos em ml, g, m
+            {"codigo": "TIN01", "descricao": "Tinta eco-solvente CMYK — frasco 1 L", "unidade": "frasco",
+             "custo_unitario": 280.00, "conteudo": 1000, "unidade_consumo": "ml", "fornecedor": "Insumos H"},
+            {"codigo": "COL01", "descricao": "Cola branca PVA — pote 1 kg", "unidade": "pote",
+             "custo_unitario": 32.00, "conteudo": 1000, "unidade_consumo": "g", "fornecedor": "Papelaria E"},
+            {"codigo": "FIT01", "descricao": "Fita dupla-face 12 mm — rolo 30 m", "unidade": "rolo",
+             "custo_unitario": 9.90, "conteudo": 30, "unidade_consumo": "m", "fornecedor": "Papelaria E"},
+            {"codigo": "DES01", "descricao": "Desgaste da impressora (cabeça, manutenção)", "unidade": "m²",
+             "custo_unitario": 3.00, "fornecedor": "—"},
             {"codigo": "CRT01", "descricao": "Corte em plotter (metro linear)", "unidade": "m", "custo_unitario": 0.15,
              "fornecedor": "Gráfica F"},
             {"codigo": "FRT01", "descricao": "Frete de entrega (móveis)", "unidade": "un", "custo_unitario": 15.00,
@@ -58,8 +68,16 @@ def dados_exemplo() -> tuple[dict[str, pd.DataFrame], dict]:
         "composicao_subgrupo": df([
             {"grupo_codigo": "04", "subgrupo_codigo": "01", "mp_codigo": "PAP01", "base": "aproveitamento",
              "quantidade": 1, "perda_pct": 5.0, "espacamento_cm": 0.0},
-            {"grupo_codigo": "04", "subgrupo_codigo": "01", "mp_codigo": "IMP01", "base": "aproveitamento",
-             "quantidade": 1, "perda_pct": 5.0, "espacamento_cm": 0.0},
+            # tinta: 12 ml/m² com 100% de cobertura; 10% de perda (purga/limpeza de cabeça)
+            {"grupo_codigo": "04", "subgrupo_codigo": "01", "mp_codigo": "TIN01", "base": "area_impressa",
+             "quantidade": 12, "perda_pct": 10.0},
+            {"grupo_codigo": "04", "subgrupo_codigo": "01", "mp_codigo": "DES01", "base": "area",
+             "quantidade": 1, "perda_pct": 0.0},
+            # cola: 60 g/m² (montagem em base) | fita: 25% do contorno
+            {"grupo_codigo": "04", "subgrupo_codigo": "01", "mp_codigo": "COL01", "base": "area",
+             "quantidade": 60, "perda_pct": 5.0},
+            {"grupo_codigo": "04", "subgrupo_codigo": "01", "mp_codigo": "FIT01", "base": "perimetro",
+             "quantidade": 0.25, "perda_pct": 5.0},
             {"grupo_codigo": "04", "subgrupo_codigo": "01", "mp_codigo": "CRT01", "base": "perimetro",
              "quantidade": 1, "perda_pct": 0.0},
             {"grupo_codigo": "04", "subgrupo_codigo": "01", "mp_codigo": "EMB01", "base": "unidade",
@@ -72,9 +90,9 @@ def dados_exemplo() -> tuple[dict[str, pd.DataFrame], dict]:
             {"codigo": "P001", "descricao": "Armário aéreo 80cm", "grupo_codigo": "01", "subgrupo_codigo": "01", "unidade": "un", "margem_desejada_pct": 15.0, "volume_mensal": 60, "preco_atual": 520.0},
             {"codigo": "P002", "descricao": "Gaveteiro 3 gavetas", "grupo_codigo": "02", "subgrupo_codigo": "01", "unidade": "un", "margem_desejada_pct": None, "volume_mensal": 40, "preco_atual": 450.0},
             {"codigo": "P101", "descricao": "Recorte impresso 15×15 cm", "grupo_codigo": "04", "subgrupo_codigo": "01",
-             "largura_cm": 15, "altura_cm": 15, "unidade": "un", "margem_desejada_pct": 20.0, "volume_mensal": 2000, "preco_atual": None},
+             "largura_cm": 15, "altura_cm": 15, "cobertura_pct": 60, "unidade": "un", "margem_desejada_pct": 20.0, "volume_mensal": 2000, "preco_atual": None},
             {"codigo": "P102", "descricao": "Recorte impresso 10×10 cm", "grupo_codigo": "04", "subgrupo_codigo": "01",
-             "largura_cm": 10, "altura_cm": 10, "unidade": "un", "margem_desejada_pct": 20.0, "volume_mensal": 3000, "preco_atual": None},
+             "largura_cm": 10, "altura_cm": 10, "cobertura_pct": 40, "unidade": "un", "margem_desejada_pct": 20.0, "volume_mensal": 3000, "preco_atual": None},
             {"codigo": "P103", "descricao": "Recorte impresso 20×30 cm", "grupo_codigo": "04", "subgrupo_codigo": "01",
              "largura_cm": 20, "altura_cm": 30, "unidade": "un", "margem_desejada_pct": 20.0, "volume_mensal": 800, "preco_atual": None},
             {"codigo": "P003", "descricao": "Nicho decorativo", "grupo_codigo": "03", "subgrupo_codigo": "01", "unidade": "un", "margem_desejada_pct": 25.0, "volume_mensal": 120, "preco_atual": 95.0},
@@ -116,5 +134,6 @@ def dados_exemplo() -> tuple[dict[str, pd.DataFrame], dict]:
         "metodo_rateio": "percentual_faturamento",
         "faturamento_mensal_previsto": 75000.0,
         "tolerancia_concorrencia_pct": 5.0,
+        "cobertura_padrao_pct": 50.0,
     }
     return dados, parametros

@@ -72,10 +72,14 @@ MATERIAS_PRIMAS = Esquema(
     (
         Coluna("codigo", obrigatoria=True),
         Coluna("descricao", obrigatoria=True),
-        Coluna("unidade", padrao="un", descricao="un, folha, m², m, kg, L..."),
+        Coluna("unidade", padrao="un", descricao="unidade de COMPRA: un, folha, frasco, pote, rolo..."),
         Coluna("custo_unitario", "real", obrigatoria=True,
-               descricao="R$ por unidade (por folha/chapa inteira quando usada por aproveitamento), "
+               descricao="R$ por unidade de compra (por folha/chapa inteira quando usada por aproveitamento), "
                          "já com frete e impostos não recuperáveis"),
+        Coluna("conteudo", "real", padrao=1.0,
+               descricao="quantas unidades de consumo há em 1 unidade de compra (frasco 1 L = 1000 ml; "
+                         "rolo de 50 m = 50); 1 = consome na própria unidade de compra"),
+        Coluna("unidade_consumo", descricao="unidade em que a ficha técnica informa o consumo: ml, g, m..."),
         Coluna("largura_m", "real", descricao="folha/chapa/bobina: largura em metros"),
         Coluna("comprimento_m", "real", descricao="folha/chapa/bobina: comprimento em metros"),
         Coluna("margem_cm", "real", padrao=0.0,
@@ -152,7 +156,7 @@ COMPOSICAO_SUBGRUPO = Esquema(
         Coluna("grupo_codigo", obrigatoria=True),
         Coluna("subgrupo_codigo", obrigatoria=True),
         Coluna("mp_codigo", obrigatoria=True),
-        Coluna("base", padrao="unidade", descricao="unidade | area | perimetro | aproveitamento"),
+        Coluna("base", padrao="unidade", descricao="unidade | area | area_impressa | perimetro | aproveitamento"),
         Coluna("quantidade", "real", obrigatoria=True),
         Coluna("perda_pct", "real", padrao=0.0),
         Coluna("espacamento_cm", "real", padrao=0.0),
@@ -185,6 +189,7 @@ PRODUTOS = Esquema(
         Coluna("subgrupo_codigo", padrao=SUBGRUPO_PADRAO_COD, descricao="código do subgrupo (dentro do grupo)"),
         Coluna("largura_cm", "real", descricao="dimensão do produto acabado, em cm"),
         Coluna("altura_cm", "real", descricao="dimensão do produto acabado, em cm"),
+        Coluna("cobertura_pct", "real", descricao="cobertura de tinta da arte, % da área; vazio = padrão dos parâmetros"),
         Coluna("unidade", padrao="un"),
         Coluna("margem_desejada_pct", "real", descricao="vazio = usa a margem padrão dos parâmetros"),
         Coluna("volume_mensal", "real", padrao=0.0, descricao="vendas mensais previstas (unidades)"),
@@ -199,13 +204,15 @@ PRODUTOS = Esquema(
 BASES_CALCULO = {
     "unidade": "quantidade fixa por unidade de produto",
     "area": "quantidade × área do produto (m²)",
-    "perimetro": "quantidade × perímetro do produto (m) — ex.: corte",
+    "perimetro": "quantidade × perímetro do produto (m) — ex.: corte, fita de borda",
+    "area_impressa": "quantidade × área do produto (m²) × cobertura de tinta (%) — ex.: tinta em ml/m²",
     "aproveitamento": "quantidade ÷ peças por folha/chapa (dimensões da matéria-prima)",
 }
 BASES_MO = ("unidade", "area", "perimetro")
 ALIASES_BASE = {"un": "unidade", "unid": "unidade", "fixa": "unidade", "fixo": "unidade",
                 "m2": "area", "m²": "area", "área": "area",
                 "perímetro": "perimetro", "m": "perimetro", "linear": "perimetro", "metro_linear": "perimetro",
+                "area_tinta": "area_impressa", "cobertura": "area_impressa", "tinta": "area_impressa",
                 "chapa": "aproveitamento", "folha": "aproveitamento", "encaixe": "aproveitamento",
                 "pecas_por_folha": "aproveitamento"}
 
@@ -214,7 +221,7 @@ COMPOSICAO = Esquema(
     (
         Coluna("produto_codigo", obrigatoria=True),
         Coluna("mp_codigo", obrigatoria=True),
-        Coluna("base", padrao="unidade", descricao="unidade | area | perimetro | aproveitamento"),
+        Coluna("base", padrao="unidade", descricao="unidade | area | area_impressa | perimetro | aproveitamento"),
         Coluna("quantidade", "real", obrigatoria=True,
                descricao="fator conforme a base (un, camadas, faces...); 0 exclui item herdado do subgrupo"),
         Coluna("perda_pct", "real", padrao=0.0, descricao="perda/refugo do processo"),
@@ -272,7 +279,8 @@ PARAMETROS_PADRAO: dict[str, object] = {
     "margem_padrao_pct": 15.0,
     "metodo_rateio": "percentual_faturamento",
     "faturamento_mensal_previsto": 0.0,
-    "tolerancia_concorrencia_pct": 5.0,  # faixa ± em torno da média para "alinhado"
+    "tolerancia_concorrencia_pct": 5.0,
+    "cobertura_padrao_pct": 100.0,  # cobertura de tinta para produtos sem valor próprio  # faixa ± em torno da média para "alinhado"
 }
 
 
@@ -292,7 +300,8 @@ ALIASES = {
     "perda": "perda_pct",
     "largura": ("largura_cm", "largura_m"), "altura": ("altura_cm",), "comprimento": ("altura_cm", "comprimento_m"),
     "larg": ("largura_cm", "largura_m"), "alt": ("altura_cm",), "comp": ("altura_cm", "comprimento_m"),
-    "margem_cm": "margem_cm", "espacamento": "espacamento_cm", "espaco": "espacamento_cm",
+    "margem_cm": "margem_cm", "cobertura": "cobertura_pct", "cobertura_tinta": "cobertura_pct",
+    "conteudo_embalagem": "conteudo", "rendimento": "conteudo", "un_consumo": "unidade_consumo", "espacamento": "espacamento_cm", "espaco": "espacamento_cm",
     "sangria": "espacamento_cm", "base_calculo": "base", "base_de_calculo": "base", "tipo_calculo": "base",
     "cod_grupo": "grupo_codigo", "codigo_grupo": "grupo_codigo", "grupo_cod": "grupo_codigo",
     "cd_grupo": "grupo_codigo", "id_grupo": "grupo_codigo",

@@ -89,15 +89,28 @@ Peças por folha: `⌊(útil + e)/(peça + e)⌋` em cada direção, sendo
 útil = dimensão da folha − 2 × margem e e = espaço entre peças. São testadas
 as duas orientações, e a sobra é aproveitada com peças giradas.
 
-Exemplo (base de demonstração, subgrupo *04 Papelaria › 01 Recortes
-impressos*): papel em folha de 1 × 2 m a R$ 18,00, impressão a R$ 60,00 por
-folha, corte em plotter a R$ 0,15/m e saquinho a R$ 0,12.
+| `area_impressa` | quantidade × área (m²) × cobertura de tinta do produto (%) |
 
-| Recorte | Peças/folha | Papel | Impressão | Corte | Embalagem |
-|---|---|---|---|---|---|
-| 15 × 15 cm | 78 (6 × 13; 87,75 %) | 18/78 × 1,05 = 0,2423 | 60/78 × 1,05 = 0,8077 | 0,6 m × 0,15 = 0,0900 | 0,1224 |
-| 10 × 10 cm | 200 | 0,0945 | 0,3150 | 0,0600 | 0,1224 |
-| 20 × 30 cm | 33 (30 + 3 giradas) | 0,5727 | 1,9091 | 0,1500 | 0,1224 |
+**Compra × consumo.** Insumos comprados em embalagem têm `conteudo` e
+`unidade_consumo`: tinta em frasco de 1 L (conteúdo 1000, ml), cola em pote
+de 1 kg (1000, g), fita em rolo de 30 m (30, m). A ficha informa o consumo
+na unidade de consumo, e o custo usado é preço ÷ conteúdo. A **cobertura de
+tinta** é cadastrada por produto (% da área impressa); vazio usa o padrão
+dos Parâmetros.
+
+Exemplo (base de demonstração, subgrupo *04 Papelaria › 01 Recortes
+impressos*, impressão própria), recorte 15 × 15 cm com 60 % de cobertura:
+
+| Item | Base | Consumo | Custo |
+|---|---|---|---|
+| Papel couché, folha 1 × 2 m a R$ 18 | aproveitamento | 1/78 folha (6 × 13; 87,75 %) + 5 % | R$ 0,2423 |
+| Tinta, frasco 1 L a R$ 280 | area_impressa, 12 ml/m² | 0,0225 × 12 × 60 % = 0,162 ml + 10 % | R$ 0,0499 |
+| Desgaste da impressora, R$ 3/m² | area | 0,0225 m² | R$ 0,0675 |
+| Cola PVA, pote 1 kg a R$ 32 | area, 60 g/m² | 1,35 g + 5 % | R$ 0,0454 |
+| Fita dupla-face, rolo 30 m a R$ 9,90 | perimetro, 0,25 | 0,15 m + 5 % | R$ 0,0520 |
+| Corte em plotter, R$ 0,15/m | perimetro | 0,6 m | R$ 0,0900 |
+| Saquinho celofane, R$ 0,12 | unidade | 1 + 2 % | R$ 0,1224 |
+| **Total de materiais** | | | **R$ 0,6694** |
 
 Na ficha do produto, uma linha com o mesmo item **substitui** a do
 subgrupo, e **quantidade 0 exclui** o item herdado. Abas de importação:

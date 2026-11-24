@@ -419,8 +419,13 @@ def pagina_ficha_tecnica() -> None:
 |---|---|---|
 | `unidade` | quantidade | embalagem: 1 un |
 | `area` | quantidade × largura × altura do produto (m²) | impressão por m², 2 = frente e verso |
-| `perimetro` | quantidade × 2 × (largura + altura) (m) | corte por metro linear |
+| `area_impressa` | quantidade × área (m²) × cobertura de tinta do produto (%) | tinta: 12 ml/m² a 100% |
+| `perimetro` | quantidade × 2 × (largura + altura) (m) | corte, fita: 0,25 = ¼ do contorno |
 | `aproveitamento` | quantidade ÷ peças por folha | papel 1×2 m, recorte 15×15 cm → 78 peças/folha |
+
+**Embalagem de compra × consumo:** cadastre a tinta como *frasco R$ 280, conteúdo 1000, unidade de consumo ml*
+e informe na ficha o consumo em ml/m²; o sistema usa R$ 0,28/ml. O mesmo vale para cola (pote 1 kg → g)
+e fita (rolo 30 m → m). A **cobertura** é cadastrada no produto (vazio = padrão dos Parâmetros).
 
 No **aproveitamento**, o custo unitário da matéria-prima é o preço da **folha inteira**, e a folha precisa ter
 largura e comprimento cadastrados. As peças por folha consideram as duas orientações, a margem da folha e o
@@ -507,9 +512,14 @@ def pagina_parametros() -> None:
                               step=1000.0, help="Necessário no método '% sobre o faturamento'.")
         tol = st.number_input("Tolerância para considerar 'alinhado' à concorrência (± %)", 0.0, 100.0,
                               float(p["tolerancia_concorrencia_pct"]), 0.5)
+        cob = st.number_input("Cobertura de tinta padrão (% da área do produto)", 0.0, 400.0,
+                              float(p.get("cobertura_padrao_pct", 100.0)), 5.0,
+                              help="Usada nos produtos sem cobertura própria, nos itens com base 'area_impressa'. "
+                                   "Acima de 100% para camadas extras (ex.: branco + CMYK).")
         if st.form_submit_button("💾 Salvar parâmetros", type="primary", disabled=not EDITA):
             repo.salvar_parametros({"margem_padrao_pct": margem, "metodo_rateio": metodo,
-                                    "faturamento_mensal_previsto": fat, "tolerancia_concorrencia_pct": tol})
+                                    "faturamento_mensal_previsto": fat, "tolerancia_concorrencia_pct": tol,
+                                    "cobertura_padrao_pct": cob})
             st.success("Parâmetros salvos.")
 
     st.markdown("""

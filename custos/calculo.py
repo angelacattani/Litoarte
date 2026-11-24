@@ -84,12 +84,13 @@ class MotorCustos:
 
         # Ficha efetiva (padrão do subgrupo + ajustes do produto) valorizada pelas dimensões
         produtos = self.d["produtos"]
-        dims = produtos.set_index("codigo")[["largura_cm", "altura_cm"]]
+        dims = produtos.set_index("codigo")[["largura_cm", "altura_cm", "cobertura_pct"]].copy()
+        dims["cobertura_pct"] = dims["cobertura_pct"].fillna(float(self.p["cobertura_padrao_pct"]))
         self.problemas: dict[str, list[str]] = {}
 
         comp = ficha_efetiva(produtos, self.d["composicao"], self.d["composicao_subgrupo"], "mp_codigo", "quantidade")
-        comp = comp.merge(self.d["materias_primas"][["codigo", "descricao", "unidade", "custo_unitario",
-                                                     "largura_m", "comprimento_m", "margem_cm"]],
+        comp = comp.merge(self.d["materias_primas"][["codigo", "descricao", "unidade", "custo_unitario", "conteudo",
+                                                     "unidade_consumo", "largura_m", "comprimento_m", "margem_cm"]],
                           left_on="mp_codigo", right_on="codigo", how="left").drop(columns="codigo")
         comp = comp.join(dims, on="produto_codigo")
         enc = [self._encaixe(r) for r in comp.itertuples()]
@@ -99,7 +100,14 @@ class MotorCustos:
         comp["fator"] = self._fator(comp)
         comp["consumo"] = comp["quantidade"] * comp["fator"]
         comp["qtd_com_perda"] = comp["consumo"] * (1 + comp["perda_pct"] / 100)
-        comp["custo"] = (comp["qtd_com_perda"] * comp["custo_unitario"]).fillna(0.0)
+        # custo por unidade de consumo: frasco R$ 280 / 1000 ml = R$ 0,28/ml
+        conteudo = comp["conteudo"].where(comp["conteudo"] > 0, 1.0).fillna(1.0)
+        comp["custo_consumo"] = comp["custo_unitario"] / conteudo
+        comp["unidade_consumo"] = comp["unidade_consumo"].fillna(comp["unidade"])
+        # no aproveitamento o consumo é em folhas: a unidade de consumo é a folha
+        comp.loc[comp["base"] == "aproveitamento", "unidade_consumo"] = comp["unidade"]
+        comp.loc[comp["base"] == "aproveitamento", "custo_consumo"] = comp["custo_unitario"] / conteudo
+        comp["custo"] = (comp["qtd_com_perda"] * comp["custo_consumo"]).fillna(0.0)
         self.linhas_mp = comp
 
         pmo = ficha_efetiva(produtos, self.d["produto_mao_de_obra"], self.d["mo_subgrupo"], "mo_codigo", "horas")
@@ -151,9 +159,11 @@ class MotorCustos:
         perim = 2 * (df["largura_cm"] + df["altura_cm"]) / 100
         pecas = df["pecas_folha"].replace(0, np.nan) if "pecas_folha" in df else np.nan
         fator = pd.Series(np.select(
-            [df["base"] == "unidade", df["base"] == "area", df["base"] == "perimetro", df["base"] == "aproveitamento"],
-            [1.0, area, perim, 1 / pecas], default=np.nan), index=df.index, dtype="float64")
-        sem_dim = df["base"].isin(["area", "perimetro"]) & fator.isna()
+            [df["base"] == "unidade", df["base"] == "area", df["base"] == "perimetro",
+             df["base"] == "aproveitamento", df["base"] == "area_impressa"],
+            [1.0, area, perim, 1 / pecas, area * df.get("cobertura_pct", 100.0) / 100],
+            default=np.nan), index=df.index, dtype="float64")
+        sem_dim = df["base"].isin(["area", "perimetro", "area_impressa"]) & fator.isna()
         for cod in df.loc[sem_dim, "produto_codigo"].unique():
             self._problema(cod, "produto sem dimensões")
         return fator
@@ -268,8 +278,8 @@ class MotorCustos:
             "materias_primas": self.linhas_mp.loc[self.linhas_mp["produto_codigo"] == codigo,
                                                   ["mp_codigo", "descricao", "origem", "base", "quantidade",
                                                    "pecas_folha", "disposicao", "aproveitamento_pct", "consumo",
-                                                   "perda_pct", "qtd_com_perda", "unidade", "custo_unitario",
-                                                   "custo"]],
+                                                   "perda_pct", "qtd_com_perda", "unidade_consumo",
+                                                   "custo_consumo", "custo"]],
             "mao_de_obra": self.linhas_mo.loc[self.linhas_mo["produto_codigo"] == codigo,
                                               ["mo_codigo", "funcao", "origem", "base", "horas", "horas_efetivas",
                                                "custo_hora", "custo"]],

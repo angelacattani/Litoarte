@@ -53,9 +53,17 @@ def test_aproveitamento_do_exemplo():
 def test_custo_recorte_15x15_calculado_a_mao(repo):
     li = linhas(repo, "P101")
     assert li.loc["PAP01", "pecas_folha"] == 78
+    area, perim = 0.15 * 0.15, 2 * (0.15 + 0.15)
     assert li.loc["PAP01", "custo"] == pytest.approx(18.00 / 78 * 1.05)      # papel
-    assert li.loc["IMP01", "custo"] == pytest.approx(60.00 / 78 * 1.05)      # impressão por folha
-    assert li.loc["CRT01", "custo"] == pytest.approx(0.60 * 0.15)            # corte: perímetro 0,6 m
+    # tinta: 12 ml/m² × 0,0225 m² × 60% de cobertura × 1,10 de perda × R$ 280/1000 ml
+    assert li.loc["TIN01", "consumo"] == pytest.approx(12 * area * 0.60)
+    assert li.loc["TIN01", "unidade_consumo"] == "ml"
+    assert li.loc["TIN01", "custo_consumo"] == pytest.approx(0.28)
+    assert li.loc["TIN01", "custo"] == pytest.approx(12 * area * 0.60 * 1.10 * 0.28)
+    assert li.loc["DES01", "custo"] == pytest.approx(area * 3.00)            # desgaste da impressora
+    assert li.loc["COL01", "custo"] == pytest.approx(60 * area * 1.05 * 32 / 1000)   # cola em g
+    assert li.loc["FIT01", "custo"] == pytest.approx(0.25 * perim * 1.05 * 9.90 / 30)  # fita em m
+    assert li.loc["CRT01", "custo"] == pytest.approx(perim * 0.15)           # corte: perímetro 0,6 m
     assert li.loc["EMB01", "custo"] == pytest.approx(0.12 * 1.02)            # embalagem
     assert (li["origem"] == "subgrupo").all()
     mo = motor(repo).detalhar("P101")["mao_de_obra"].iloc[0]
@@ -81,7 +89,7 @@ def test_produto_substitui_e_exclui_item_do_subgrupo(repo):
     assert li.loc["PAP01", "pecas_folha"] == 72
     assert li.loc["PAP01", "custo"] == pytest.approx(18.00 / 72 * 1.10)
     assert "EMB01" not in li.index
-    assert li.loc["IMP01", "origem"] == "subgrupo"
+    assert li.loc["TIN01", "origem"] == "subgrupo"
     assert "PAP01" in linhas(repo, "P102").index and linhas(repo, "P102").loc["PAP01", "origem"] == "subgrupo"
 
 
@@ -132,8 +140,8 @@ def test_xlsx_com_fichas_de_subgrupo(repo, tmp_path):
     conteudo = exportar_xlsx(repo.carregar_tudo(), repo.parametros())
     novo = Repositorio(tmp_path / "n.db")
     assert novo.importar(ler_xlsx(io.BytesIO(conteudo)), "substituir") == []
-    assert len(novo.carregar("composicao_subgrupo")) == 4
-    assert linhas(novo, "P101").loc["IMP01", "custo"] == pytest.approx(60 / 78 * 1.05)
+    assert len(novo.carregar("composicao_subgrupo")) == 7
+    assert linhas(novo, "P101").loc["TIN01", "custo"] == pytest.approx(12 * 0.0225 * 0.6 * 1.1 * 0.28)
 
 
 def test_migracao_ficha_antiga_vira_base_unidade(tmp_path):
@@ -149,3 +157,21 @@ def test_migracao_ficha_antiga_vira_base_unidade(tmp_path):
     r.mesclar("composicao", pd.DataFrame([{"produto_codigo": "A", "mp_codigo": "M", "quantidade": 3}]))
     assert r.carregar("composicao").loc[0, "base"] == "unidade"
     assert motor(r).tabela_precos().loc[0, "custo_mp"] == pytest.approx(6)
+
+
+def test_cobertura_padrao_e_propria(repo):
+    li = linhas(repo, "P103")                                                 # sem cobertura -> padrão 50%
+    assert li.loc["TIN01", "consumo"] == pytest.approx(12 * 0.06 * 0.50)
+    p = repo.parametros()
+    p["cobertura_padrao_pct"] = 100.0
+    repo.salvar_parametros(p)
+    assert linhas(repo, "P103").loc["TIN01", "consumo"] == pytest.approx(12 * 0.06 * 1.00)
+    assert linhas(repo, "P101").loc["TIN01", "consumo"] == pytest.approx(12 * 0.0225 * 0.60)  # própria
+
+
+def test_conteudo_vale_para_folha_em_resma(repo):
+    """Papel comprado em resma de 100 folhas: custo por folha = preço ÷ 100."""
+    mp = repo.carregar("materias_primas")
+    mp.loc[mp["codigo"] == "PAP01", ["unidade", "custo_unitario", "conteudo"]] = ["resma", 1800.0, 100]
+    repo.salvar("materias_primas", mp)
+    assert linhas(repo, "P101").loc["PAP01", "custo"] == pytest.approx(18.00 / 78 * 1.05)
