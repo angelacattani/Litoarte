@@ -1,7 +1,9 @@
 # Litoarte v2 — Composição de Custos e Formação de Preço de Venda
 
 Especificação técnica (fase de projeto): modelo de dados, fluxo de telas e motor de precificação.
-Status: **proposta para validação** — nenhum código da v2 foi escrito ainda.
+Status: **aprovada** (branch `v2`). Decisões: NiceGUI (Python) · perda parametrizável · cadastro começa
+do zero · desenvolvimento na branch `v2` até a conclusão. **Fase 1 concluída** (schema, migrações,
+motor e testes).
 
 ---
 
@@ -68,6 +70,7 @@ erDiagram
         int fornecedor_id FK "nullable"
         numeric largura_m "opcional: folha/chapa/bobina"
         numeric comprimento_m "opcional"
+        numeric margem_cm "borda não aproveitável da folha"
         bool ativo
         timestamp atualizado_em
     }
@@ -142,7 +145,7 @@ erDiagram
         int subgrupo_id FK "grupo derivado do subgrupo"
         numeric largura_cm "opcional"
         numeric altura_cm "opcional"
-        int perfil_venda_id FK
+        int perfil_venda_id FK "null = perfil padrão"
         numeric margem_desejada_pct "null = padrão da configuração"
         numeric preco_praticado "preço de tabela vigente (opcional)"
         int clonado_de_id FK "nullable, auto-referência"
@@ -175,6 +178,7 @@ erDiagram
         numeric capacidade_horas_mes "null = soma das etapas de MO"
         numeric capacidade_unidades_mes
         numeric margem_padrao_pct
+        text modo_perda "sobre_compra|acrescimo"
     }
 ```
 
@@ -330,8 +334,14 @@ $q^{*}$ útil é preciso comprar $q^{*}/(1-p)$:
 
 $$\text{MP}_i = \frac{q^{*}_i}{1 - p_i}\, c_i \qquad\qquad \text{MP} = \sum_i \text{MP}_i$$
 
-> Diferença para a v1: a v1 usava $q^{*}(1+p)$, que subestima a perda (10 % → 1,100 em vez de 1,111).
-> Para manter a convenção de acréscimo, basta trocar o divisor; a regra fica em um único ponto do motor.
+**Parametrizável** (`CONFIGURACAO.modo_perda`):
+
+| modo_perda | fator | 10 % de perda | uso |
+|---|---|---|---|
+| `sobre_compra` (padrão) | $1/(1-p)$ | 1,111 | perda medida sobre o material comprado (aparas, refugo) |
+| `acrescimo` | $1+p$ | 1,100 | convenção da v1 / tabelas de fornecedor que informam acréscimo |
+
+O percentual $p$ vem do cadastro do insumo e pode ser sobrescrito em cada linha da ficha.
 
 ### 3.2 Mão de obra
 

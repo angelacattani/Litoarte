@@ -3,22 +3,25 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sistema-custos"
-version = "0.1.0"
-description = "Cadastro de custos e formação de preço de venda (markup divisor)"
+name = "litoarte"
+version = "2.0.0.dev0"
+description = "Composição de custos e formação de preço de venda"
 requires-python = ">=3.11"
 dependencies = [
-    "streamlit>=1.40",
-    "pandas>=2.0",
-    "numpy>=1.26",
-    "openpyxl>=3.1",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
 ]
 
 [project.optional-dependencies]
+# interface (fase 3) e importação (fase 2) entram aqui conforme as fases
 dev = ["pytest>=8.0"]
+postgres = ["psycopg[binary]>=3.1"]
 
-[tool.setuptools]
-packages = ["custos"]
+[tool.setuptools.packages.find]
+include = ["litoarte*"]
+
+[tool.setuptools.package-data]
+litoarte = ["migrations/*.py", "migrations/*.mako", "migrations/versions/*.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
