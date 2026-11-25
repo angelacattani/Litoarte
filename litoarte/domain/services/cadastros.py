@@ -21,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from ..models import (FONTES_PRECO, Concorrente, PrecoConcorrente)
 from ..models import (CATEGORIAS_CV, GRANDEZAS, MODOS_CUSTO_MO, MODOS_QTD, TIPOS_CV, UNIDADES_TEMPO, CustoFixo,
                       CustoVariavel, FichaMO, FichaMP, Fornecedor, Grupo, MaoDeObra, MateriaPrima, PerfilVenda,
                       Produto, Subgrupo, UnidadeMedida)
@@ -345,42 +346,47 @@ def _sub_exibir(o: Subgrupo) -> dict:
 
 
 def _prod_faixas(vals, erros):
-    """Colunas margem_faixa_1..5: número = margem própria; 'padrao' = volta à margem geral."""
-    faixas = {}
+    """margem_faixa_N: margem própria ('padrao' volta à geral); preco_faixa_N: preço aplicado ('remover' apaga)."""
+    faixas: dict[int, dict] = {}
     for i in range(1, N_FAIXAS + 1):
-        nome = f"margem_faixa_{i}"
-        if nome not in vals:
-            continue
-        bruto = vals.pop(nome)
-        if V.chave(bruto) in ("padrao", "geral", "remover"):
-            faixas[i] = None
-            continue
-        try:
-            m = V.numero(bruto)
-        except V.ValorInvalido as e:
-            erros.append((nome, str(e)))
-            continue
-        if m is not None and not 0 <= m < 100:
-            erros.append((nome, "entre 0 e 100 %"))
-            continue
-        faixas[i] = m
+        for tipo, col, limite in (("margem", f"margem_faixa_{i}", 100), ("preco", f"preco_faixa_{i}", None)):
+            if col not in vals:
+                continue
+            bruto = vals.pop(col)
+            if V.chave(bruto) in ("padrao", "geral", "remover", "apagar"):
+                faixas.setdefault(i, {})[tipo] = None
+                continue
+            try:
+                v = V.numero(bruto)
+            except V.ValorInvalido as e:
+                erros.append((col, str(e)))
+                continue
+            if v is None:
+                continue
+            if v < 0 or (limite is not None and v >= limite):
+                erros.append((col, "entre 0 e 100 %" if limite else "não pode ser negativo"))
+                continue
+            faixas.setdefault(i, {})[tipo] = v
     if faixas:
         vals["_faixas"] = faixas
 
 
 def _prod_depois(sessao, obj: Produto, vals):
     from ..models import FaixaPreco, ProdutoFaixa
-    for ordem, m in vals.get("_faixas", {}).items():
+    for ordem, mud in vals.get("_faixas", {}).items():
         faixa = sessao.scalar(select(FaixaPreco).where(FaixaPreco.ordem == ordem))
         if faixa is None:
             continue
         atual = next((x for x in obj.margens_faixas if x.faixa_id == faixa.id), None)
-        if m is None and atual is not None:
+        if atual is None:
+            atual = ProdutoFaixa(faixa_id=faixa.id)
+            obj.margens_faixas.append(atual)
+        if "margem" in mud:
+            atual.margem_pct = mud["margem"]
+        if "preco" in mud:
+            atual.preco_aplicado = mud["preco"]
+        if atual.margem_pct is None and atual.preco_aplicado is None:
             obj.margens_faixas.remove(atual)
-        elif m is not None and atual is not None:
-            atual.margem_pct = m
-        elif m is not None:
-            obj.margens_faixas.append(ProdutoFaixa(faixa_id=faixa.id, margem_pct=m))
 
 
 def _prod_ajustar(sessao, vals, existente, erros):
@@ -406,7 +412,10 @@ def _prod_exibir(o: Produto) -> dict:
             "largura_cm": o.largura_cm, "altura_cm": o.altura_cm,
             "perfil_venda": o.perfil_venda.nome if o.perfil_venda else None,
             "margem_desejada_pct": o.margem_desejada_pct, "preco_praticado": o.preco_praticado, "ativo": o.ativo,
-            **{f"margem_faixa_{m.faixa.ordem}": m.margem_pct for m in o.margens_faixas}}
+            "custo_atual": o.custo_atual,
+            **{f"margem_faixa_{m.faixa.ordem}": m.margem_pct for m in o.margens_faixas if m.margem_pct is not None},
+            **{f"preco_faixa_{m.faixa.ordem}": m.preco_aplicado for m in o.margens_faixas
+               if m.preco_aplicado is not None}}
 
 
 def _ficha_mp_buscar(sessao, vals):
@@ -417,6 +426,61 @@ def _ficha_mp_buscar(sessao, vals):
 def _ficha_mo_buscar(sessao, vals):
     return sessao.scalar(select(FichaMO).where(FichaMO.produto_id == vals["produto"],
                                                FichaMO.mao_de_obra_id == vals["etapa"]))
+
+
+def _conc_ajustar(sessao, vals, existente, erros):
+    if "grupos" in vals:
+        codigos = [c.strip() for c in str(vals.pop("grupos")).replace(",", ";").split(";") if c.strip()]
+        grupos = []
+        for cod in codigos:
+            g = sessao.scalar(select(Grupo).where(Grupo.codigo == cod))
+            if g is None:
+                erros.append(("grupos", f"grupo '{cod}' não cadastrado"))
+            else:
+                grupos.append(g)
+        vals["_grupos"] = grupos
+
+
+def _conc_depois(sessao, obj, vals):
+    if "_grupos" in vals:
+        obj.grupos = vals["_grupos"]
+
+
+def _conc_exibir(o) -> dict:
+    return {"nome": o.nome, "site": o.site, "observacao": o.observacao,
+            "grupos": "; ".join(g.codigo for g in o.grupos), "ativo": o.ativo}
+
+
+def _pc_buscar(sessao, vals):
+    from ..models import PrecoConcorrente
+    if not isinstance(vals["concorrente"], int):      # concorrente novo (será criado): não há preço anterior
+        return None
+    return sessao.scalar(select(PrecoConcorrente).where(
+        PrecoConcorrente.concorrente_id == vals["concorrente"], PrecoConcorrente.grupo_id == vals["grupo"],
+        PrecoConcorrente.descricao == vals["descricao"]))
+
+
+def _pc_ajustar(sessao, vals, existente, erros):
+    if "subgrupo" in vals:
+        cod = vals.pop("subgrupo")
+        gid = vals.get("grupo", getattr(existente, "grupo_id", None))
+        sub = sessao.scalar(select(Subgrupo).where(Subgrupo.grupo_id == gid, Subgrupo.codigo == cod))
+        if sub is None:
+            erros.append(("subgrupo", f"subgrupo '{cod}' não existe no grupo"))
+        else:
+            vals.setdefault("_attrs", {})["subgrupo_id"] = sub.id
+
+
+def _pc_depois(sessao, obj, vals):
+    if obj.grupo not in obj.concorrente.grupos:      # mantém o concorrente associado ao grupo
+        obj.concorrente.grupos.append(obj.grupo)
+
+
+def _pc_exibir(o) -> dict:
+    return {"grupo": o.grupo.codigo, "subgrupo": o.subgrupo.codigo if o.subgrupo else None,
+            "produto": o.produto.sku if o.produto else None, "concorrente": o.concorrente.nome,
+            "descricao": o.descricao, "preco": o.preco, "url": o.url, "fonte": o.fonte,
+            "coletado_em": o.coletado_em.strftime("%d/%m/%Y") if o.coletado_em else None}
 
 
 ALIAS_MODO_QTD = {"m2": "area", "m²": "area", "area_m2": "area", "perimetro_m": "perimetro", "m": "perimetro",
@@ -523,10 +587,41 @@ MODULOS: dict[str, Modulo] = {m.chave: m for m in [
               ajuda="vazio = margem padrão da configuração"),
         Campo("preco_praticado", "Preço praticado (R$)", "numero", minimo=0),
         ATIVO,
+        Campo("custo_atual", "Custo atual (R$)", "numero", minimo=0, na_lista=False,
+              ajuda="custo usado hoje (sistema/planilha anterior), para comparar com o custo calculado"),
+        *(Campo(f"preco_faixa_{i}", f"Preço aplicado faixa {i} (R$)", virtual=True, na_lista=False,
+                ajuda="preço praticado hoje nesta faixa; 'remover' apaga")
+          for i in range(1, N_FAIXAS + 1)),
         *(Campo(f"margem_faixa_{i}", f"Margem faixa {i} (%)", virtual=True, na_lista=False,
                 ajuda="margem própria do produto na faixa; vazio = margem geral; 'padrao' remove a própria")
           for i in range(1, N_FAIXAS + 1)),
     ), ("sku",), ajustar=_prod_ajustar, depois=_prod_depois, exibir=_prod_exibir, ordem=(Produto.sku,)),
+
+    Modulo("concorrentes", "Concorrentes", Concorrente, (
+        Campo("nome", "Nome", obrigatorio=True, exemplo="Loja de Quadros Exemplo"),
+        Campo("site", "Site", exemplo="https://www.exemplo.com.br"),
+        Campo("grupos", "Grupos (códigos)", virtual=True, exemplo="QDR; PAP",
+              ajuda="grupos de produtos em que concorre, separados por ';'"),
+        Campo("observacao", "Observação"),
+        ATIVO,
+    ), ("nome",), ajustar=_conc_ajustar, depois=_conc_depois, exibir=_conc_exibir, ordem=(Concorrente.nome,)),
+
+    Modulo("precos_concorrentes", "Preços de concorrentes", PrecoConcorrente, (
+        Campo("grupo", "Grupo (código)", "ref", obrigatorio=True, atributo="grupo_id", ref=(Grupo, "codigo"),
+              exemplo="QDR"),
+        Campo("subgrupo", "Subgrupo (código)", virtual=True, ajuda="opcional: subgrupo comparável"),
+        Campo("produto", "Produto (SKU)", "ref", atributo="produto_id", ref=(Produto, "sku"),
+              ajuda="opcional: seu produto equivalente"),
+        Campo("concorrente", "Concorrente", "ref", obrigatorio=True, atributo="concorrente_id",
+              ref=(Concorrente, "nome"), cria_ref=True, exemplo="Loja de Quadros Exemplo",
+              ajuda="criado automaticamente se não existir"),
+        Campo("descricao", "Produto similar", obrigatorio=True, exemplo="Quadro canvas 60x90 paisagem"),
+        Campo("preco", "Preço (R$)", "numero", obrigatorio=True, maior_que=0, exemplo=149.9),
+        Campo("url", "Link", na_lista=False),
+        Campo("fonte", "Fonte", "opcao", opcoes=FONTES_PRECO, ajuda="manual, mercadolivre, google_shopping..."),
+        Campo("coletado_em", "Coletado em", virtual=True, na_lista=True),
+    ), ("concorrente", "grupo", "descricao"), buscar=_pc_buscar, ajustar=_pc_ajustar, depois=_pc_depois,
+        exibir=_pc_exibir),
 
     Modulo("ficha_materiais", "Ficha técnica — materiais", FichaMP, (
         Campo("produto", "Produto (SKU)", "ref", obrigatorio=True, atributo="produto_id", ref=(Produto, "sku"),
@@ -555,4 +650,5 @@ MODULOS: dict[str, Modulo] = {m.chave: m for m in [
 
 # Ordem de carga respeitando dependências
 ORDEM_IMPORTACAO = ("unidades", "fornecedores", "materias_primas", "mao_de_obra", "custos_fixos",
-                    "custos_variaveis", "grupos", "subgrupos", "produtos", "ficha_materiais", "ficha_mao_de_obra")
+                    "custos_variaveis", "grupos", "subgrupos", "produtos", "ficha_materiais", "ficha_mao_de_obra",
+                    "concorrentes", "precos_concorrentes")

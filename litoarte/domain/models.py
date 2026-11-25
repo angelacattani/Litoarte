@@ -252,6 +252,7 @@ class Produto(ComDatas, Base):
     perfil_venda_id: Mapped[int | None] = mapped_column(ForeignKey("perfil_venda.id", ondelete="RESTRICT"))
     margem_desejada_pct: Mapped[float | None] = mapped_column(Num)       # None = padrão da configuração
     preco_praticado: Mapped[float | None] = mapped_column(Num)
+    custo_atual: Mapped[float | None] = mapped_column(Num)        # custo usado hoje (sistema/planilha anterior)
     clonado_de_id: Mapped[int | None] = mapped_column(ForeignKey("produto.id", ondelete="SET NULL"))
     ativo: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
 
@@ -271,6 +272,7 @@ class Produto(ComDatas, Base):
         CheckConstraint("(largura_cm IS NULL OR largura_cm > 0) AND (altura_cm IS NULL OR altura_cm > 0)",
                         name="dimensoes_positivas"),
         CheckConstraint("preco_praticado IS NULL OR preco_praticado >= 0", name="preco_nao_negativo"),
+        CheckConstraint("custo_atual IS NULL OR custo_atual >= 0", name="custo_atual_nao_negativo"),
     )
 
 
@@ -328,14 +330,62 @@ class FaixaPreco(ComDatas, Base):
 
 
 class ProdutoFaixa(Base):
-    """Margem própria de um produto numa faixa (sobrepõe a margem geral da faixa)."""
+    """Dados do produto numa faixa: margem própria (sobrepõe a geral) e/ou preço aplicado hoje."""
     __tablename__ = "produto_faixa"
     produto_id: Mapped[int] = mapped_column(ForeignKey("produto.id", ondelete="CASCADE"), primary_key=True)
     faixa_id: Mapped[int] = mapped_column(ForeignKey("faixa_preco.id", ondelete="CASCADE"), primary_key=True)
-    margem_pct: Mapped[float] = mapped_column(Num)
+    margem_pct: Mapped[float | None] = mapped_column(Num)            # None = margem geral da faixa
+    preco_aplicado: Mapped[float | None] = mapped_column(Num)        # preço praticado nesta faixa
     produto: Mapped["Produto"] = relationship(back_populates="margens_faixas")
     faixa: Mapped[FaixaPreco] = relationship()
-    __table_args__ = (CheckConstraint("margem_pct >= 0 AND margem_pct < 100", name="margem_faixa"),)
+    __table_args__ = (
+        CheckConstraint("margem_pct IS NULL OR (margem_pct >= 0 AND margem_pct < 100)", name="margem_faixa"),
+        CheckConstraint("preco_aplicado IS NULL OR preco_aplicado >= 0", name="preco_aplicado_nao_negativo"),
+    )
+
+
+# ---------------------------------------------------------------------------- concorrência
+concorrente_grupo = Table(
+    "concorrente_grupo", Base.metadata,
+    Column("concorrente_id", ForeignKey("concorrente.id", ondelete="CASCADE"), primary_key=True),
+    Column("grupo_id", ForeignKey("grupo.id", ondelete="CASCADE"), primary_key=True),
+)
+
+FONTES_PRECO = ("manual", "mercadolivre", "google_shopping", "importacao")
+
+
+class Concorrente(ComDatas, Base):
+    """Concorrente (loja, marketplace, vendedor), associado aos grupos de produtos em que concorre."""
+    __tablename__ = "concorrente"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    nome: Mapped[str] = mapped_column(String(120), unique=True)
+    site: Mapped[str | None] = mapped_column(String(255))
+    observacao: Mapped[str | None] = mapped_column(Text)
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    grupos: Mapped[list[Grupo]] = relationship(secondary=concorrente_grupo, order_by=Grupo.codigo)
+
+
+class PrecoConcorrente(Base):
+    """Preço de produto similar de um concorrente, coletado manualmente ou na web."""
+    __tablename__ = "preco_concorrente"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    concorrente_id: Mapped[int] = mapped_column(ForeignKey("concorrente.id", ondelete="CASCADE"), index=True)
+    grupo_id: Mapped[int] = mapped_column(ForeignKey("grupo.id", ondelete="CASCADE"), index=True)
+    subgrupo_id: Mapped[int | None] = mapped_column(ForeignKey("subgrupo.id", ondelete="SET NULL"))
+    produto_id: Mapped[int | None] = mapped_column(ForeignKey("produto.id", ondelete="SET NULL"), index=True)
+    descricao: Mapped[str] = mapped_column(String(300))               # título do produto similar
+    preco: Mapped[float] = mapped_column(Num)
+    url: Mapped[str | None] = mapped_column(String(1000))
+    fonte: Mapped[str] = mapped_column(String(20), default="manual")
+    coletado_em: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, server_default=func.now())
+    concorrente: Mapped[Concorrente] = relationship()
+    grupo: Mapped[Grupo] = relationship()
+    subgrupo: Mapped["Subgrupo | None"] = relationship()
+    produto: Mapped["Produto | None"] = relationship()
+    __table_args__ = (
+        CheckConstraint("preco > 0", name="preco_positivo"),
+        CheckConstraint(f"fonte IN {_em(FONTES_PRECO)}", name="fonte"),
+    )
 
 
 # ---------------------------------------------------------------------------- configuração e auditoria
@@ -349,6 +399,12 @@ class Configuracao(ComDatas, Base):
     capacidade_unidades_mes: Mapped[float | None] = mapped_column(Num)
     margem_padrao_pct: Mapped[float] = mapped_column(Num, default=20.0, server_default=text("20"))
     modo_perda: Mapped[str] = mapped_column(String(16), default="sobre_compra")
+    # busca de preços na web (credenciais ficam só neste banco local)
+    ml_client_id: Mapped[str | None] = mapped_column(String(100))
+    ml_client_secret: Mapped[str | None] = mapped_column(String(200))
+    ml_access_token: Mapped[str | None] = mapped_column(String(500))
+    ml_token_expira_em: Mapped[datetime | None] = mapped_column(DateTime)
+    serpapi_chave: Mapped[str | None] = mapped_column(String(200))
     __table_args__ = (
         CheckConstraint("id = 1", name="registro_unico"),
         CheckConstraint(f"metodo_rateio IN {_em(METODOS_RATEIO)}", name="metodo_rateio"),

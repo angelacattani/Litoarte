@@ -7,6 +7,8 @@ from nicegui import ui
 from ..domain.services import composicao as C
 from ..domain.services.cadastros import ErroValidacao
 from . import estado
+from ..busca import montar_consulta
+from ..domain.models import Subgrupo
 from .campos import campo_numero, ler
 from .formatos import brl, num, pct
 
@@ -113,8 +115,10 @@ class TelaComposicao:
                         with ui.tab_panel(t_mo).classes("q-pa-none"):
                             self._mao_de_obra()
                 self._faixas()
+                self._concorrencia()
                 self._canais()
             with ui.column().classes("w-[400px] max-lg:w-full shrink-0 gap-4 sticky top-16"):
+                self._custo()
                 self._painel()
                 self._simulador()
         self._recalcular(marcar=False)
@@ -174,6 +178,9 @@ class TelaComposicao:
                 self.ctl["preco_praticado"] = campo_numero(
                     "Preço praticado (R$)", r.preco_praticado, lambda v: self._set("preco_praticado", v)) \
                     .props('debounce=300 hint="preço de tabela atual (opcional)"').mark("prod-preco")
+                self.ctl["custo_atual"] = campo_numero(
+                    "Custo atual (R$)", r.custo_atual, lambda v: self._set("custo_atual", v)) \
+                    .props('debounce=300 hint="custo usado hoje (sistema anterior)"').mark("prod-custo-atual")
 
     def _subs_do_grupo(self, grupo: str | None) -> dict:
         return {sid: f"{sc} - {sn}" for sid, (g, gn, sc, sn) in self.cat.subgrupos.items() if g == grupo}
@@ -451,34 +458,66 @@ class TelaComposicao:
 
     # ------------------------------------------------------------------ 5 preços (faixas de margem)
     def _faixas(self):
-        """Campos de margem criados uma vez (não perdem o foco); valores atualizados em _rotulos_faixas."""
-        self.rot_faixas: dict[int, tuple] = {}
+        """Campos criados uma vez (não perdem o foco); valores atualizados em _rotulos_faixas."""
+        self.rot_faixas: dict[int, dict] = {}
         if not self.cat.faixas:
             return
         with ui.card().classes("w-full").mark("faixas"):
             with ui.row().classes("w-full items-center"):
-                ui.label("5 preços por margem").classes("text-subtitle1 text-weight-medium")
+                ui.label("5 preços").classes("text-subtitle1 text-weight-medium")
                 ui.space()
+                self.mostrar_calc = ui.switch("mostrar preços calculados", value=False,
+                                              on_change=lambda e: self._visib_calculados(e.value)) \
+                    .props("dense").mark("faixas-mostrar-calculados")
                 ui.link("configurar faixas", "/configuracao").classes("text-caption")
-            ui.label("Mesmo custo, margens diferentes. Margem em branco = margem geral da faixa (Configuração).") \
+            ui.label("Preço aplicado = o que você pratica hoje (edite para substituir). A margem real é calculada com "
+                     "o custo do sistema; em vermelho quando fica abaixo da margem da faixa.") \
                 .classes("text-caption text-grey-7")
-            with ui.grid(columns="minmax(110px,1.2fr) 130px repeat(3, minmax(90px,1fr))") \
+            with ui.grid(columns="minmax(110px,1.1fr) 110px 140px 110px minmax(170px,1.3fr)") \
                     .classes("w-full items-center gap-x-3 gap-y-1"):
-                for t in ("Faixa", "Margem (%)", "Preço", "Lucro", "Margem contrib."):
+                for t in ("Faixa", "Margem (%)", "Preço aplicado (R$)", "Margem real", ""):
                     ui.label(t).classes("text-caption text-weight-medium text-grey-8" +
-                                        (" text-right" if t not in ("Faixa", "Margem (%)") else ""))
+                                        (" text-right" if t == "Margem real" else ""))
                 for f in self.cat.faixas:
                     with ui.column().classes("gap-0"):
                         ui.label(f.nome).classes("text-body2")
                         ui.label(f"geral {num(f.margem_pct)} %").classes("text-caption text-grey-6")
-                    campo_numero("", self.r.margens_faixas.get(f.id), lambda v, fid=f.id: self._margem_faixa(fid, v)) \
-                        .props(f'debounce=300 placeholder="{num(f.margem_pct)} (geral)" input-class="text-right"') \
+                    campo_numero("", self.r.margens_faixas.get(f.id), lambda v, fid=f.id: self._margem_faixa(fid, v),
+                                 limpar=False) \
+                        .props(f'debounce=300 placeholder="{num(f.margem_pct)}" input-class="text-right"') \
                         .classes("w-full").mark(f"faixa-margem-{f.ordem}")
-                    preco = ui.label().classes("text-right text-weight-bold text-primary").mark(f"faixa-preco-{f.ordem}")
-                    lucro = ui.label().classes("text-right")
-                    mc = ui.label().classes("text-right text-grey-8")
-                    self.rot_faixas[f.id] = (preco, lucro, mc)
+                    aplicado = campo_numero("", self.r.precos_aplicados.get(f.id),
+                                            lambda v, fid=f.id: self._preco_aplicado(fid, v), moeda=True) \
+                        .props('debounce=300 input-class="text-right"').classes("w-full") \
+                        .mark(f"faixa-aplicado-{f.ordem}")
+                    real = ui.label().classes("text-right text-weight-medium").mark(f"faixa-real-{f.ordem}")
+                    with ui.element("div"):          # célula sempre presente: mantém o alinhamento da grade
+                        with ui.row().classes("items-center gap-1 no-wrap") as calc_box:
+                            calc = ui.label().classes("text-primary text-weight-bold").mark(f"faixa-preco-{f.ordem}")
+                            ui.button(icon="south_west", on_click=lambda fid=f.id: self._usar_calculado(fid)) \
+                                .props("flat dense round size=sm").tooltip("usar o preço calculado como aplicado") \
+                                .mark(f"faixa-usar-{f.ordem}")
+                        calc_box.set_visibility(False)
+                    self.rot_faixas[f.id] = {"aplicado": aplicado, "real": real, "calc": calc, "box": calc_box}
         self._rotulos_faixas()
+
+    def _visib_calculados(self, ver: bool):
+        for d in self.rot_faixas.values():
+            d["box"].set_visibility(ver)
+
+    def _preco_aplicado(self, faixa_id: int, valor):
+        if valor is None:
+            self.r.precos_aplicados.pop(faixa_id, None)
+        else:
+            self.r.precos_aplicados[faixa_id] = valor
+        self._mudou()
+
+    def _usar_calculado(self, faixa_id: int):
+        pf = next(p for p in C.precos_faixas(self.cat, self.r, self.res) if p.faixa.id == faixa_id)
+        if pf.preco is None or pf.preco <= 0:
+            ui.notify("Não há preço calculado para esta faixa.", type="warning")
+            return
+        self.rot_faixas[faixa_id]["aplicado"].value = num(round(pf.preco, 2), 2, minimo=2)  # dispara _preco_aplicado
 
     def _margem_faixa(self, faixa_id: int, valor):
         if valor is None:
@@ -491,14 +530,112 @@ class TelaComposicao:
         if not getattr(self, "rot_faixas", None):
             return
         for pf in C.precos_faixas(self.cat, self.r, self.res):
-            preco, lucro, mc = self.rot_faixas[pf.faixa.id]
-            if pf.lucro is None:
-                preco.text = "impossível" if pf.preco is None else "—"
-                lucro.text = mc.text = ""
+            d = self.rot_faixas[pf.faixa.id]
+            d["calc"].text = brl(pf.preco) if pf.preco and pf.preco > 0 else ("impossível" if pf.preco is None else "—")
+            if pf.margem_aplicada is None:
+                d["real"].text = "—"
+                d["real"].classes(replace="text-right text-weight-medium text-grey-6")
             else:
-                preco.text = brl(pf.preco)
-                lucro.text = brl(pf.lucro)
-                mc.text = pct(pf.margem_contribuicao_pct, 1)
+                d["real"].text = pct(pf.margem_aplicada, 1)
+                cor = "text-negative" if pf.abaixo else "text-positive"
+                d["real"].classes(replace=f"text-right text-weight-medium {cor}")
+        if hasattr(self, "_custo"):
+            self._custo.refresh()
+
+    # ------------------------------------------------------------------ custo atual × calculado
+    @ui.refreshable_method
+    def _custo(self):
+        comp = C.comparar_custo(self.r, self.res)
+        with ui.card().classes("w-full").mark("custo-comparativo"):
+            ui.label("Custo atual × calculado").classes("text-subtitle1 text-weight-medium")
+            with ui.grid(columns=3).classes("w-full gap-2"):
+                for rot, val in (("Custo atual (informado)", brl(comp.custo_atual) if comp.custo_atual is not None
+                                  else "não informado"),
+                                 ("Custo calculado (ficha)", brl(comp.custo_calculado)),
+                                 ("Diferença", "—" if comp.diferenca is None else
+                                  f"{'+' if comp.diferenca >= 0 else ''}{brl(comp.diferenca)} "
+                                  f"({'+' if comp.diferenca_pct >= 0 else ''}{pct(comp.diferenca_pct, 1)})")):
+                    with ui.column().classes("gap-0"):
+                        ui.label(rot).classes("text-caption text-grey-7")
+                        cor = ""
+                        if rot == "Diferença" and comp.diferenca is not None:
+                            cor = " text-negative" if comp.diferenca > 0 else " text-positive"
+                        ui.label(val).classes("text-body1 text-weight-bold" + cor).mark(f"custo-{rot.split()[0].lower()}")
+            ui.label("Custo calculado = materiais + mão de obra da ficha técnica, com os preços atuais dos cadastros. "
+                     f"Com custo fixo e variáveis em R$: {brl(comp.custo_total)}.").classes("text-caption text-grey-7")
+
+    # ------------------------------------------------------------------ concorrência
+    @ui.refreshable_method
+    def _concorrencia(self):
+        from ..domain.services import concorrencia
+        from .busca_ui import abrir_busca
+        r = self.r
+        if r.subgrupo_id not in self.cat.subgrupos:
+            return
+        with estado.sessao() as s:
+            grupo_id = s.get(Subgrupo, r.subgrupo_id).grupo_id
+            res = concorrencia.resumo(s, grupo_id, r.subgrupo_id, r.id)
+        g = self.cat.subgrupos[r.subgrupo_id]
+        with ui.card().classes("w-full").mark("concorrencia"):
+            with ui.row().classes("w-full items-center"):
+                ui.label(f"Concorrência — grupo {g[0]} - {g[1]}").classes("text-subtitle1 text-weight-medium")
+                ui.space()
+                ui.button("Buscar na web", icon="travel_explore", on_click=lambda: abrir_busca(
+                    consulta=montar_consulta(r.nome, r.largura_cm, r.altura_cm), grupo_id=grupo_id,
+                    subgrupo_id=r.subgrupo_id, produto_id=r.id, ao_gravar=self._concorrencia.refresh)) \
+                    .props("outline dense").mark("buscar-web")
+                ui.button("Registrar preço", icon="add", on_click=lambda: self._registrar_preco(grupo_id)) \
+                    .props("flat dense")
+            if not res.precos:
+                ui.label("Nenhum preço de concorrente para este grupo. Use 'Buscar na web' ou registre manualmente.") \
+                    .classes("text-caption text-grey-7")
+                return
+            base = {"produto": "deste produto", "subgrupo": "do subgrupo", "grupo": "do grupo"}[res.base]
+            ui.label(f"Preços {base} ({res.n}): mínimo {brl(res.minimo)} · mediana {brl(res.mediana)} · "
+                     f"máximo {brl(res.maximo)}").classes("text-body2 text-weight-medium").mark("concorrencia-resumo")
+            rows = [{"id": p.id, "conc": p.concorrente, "desc": p.descricao, "preco": brl(p.preco), "nivel": p.nivel,
+                     "data": p.coletado_em.strftime("%d/%m/%Y"), "url": p.url or ""} for p in res.precos[:12]]
+            t = ui.table(rows=rows, row_key="id", columns=[
+                {"name": "conc", "label": "Concorrente", "field": "conc", "align": "left"},
+                {"name": "desc", "label": "Produto similar", "field": "desc", "align": "left"},
+                {"name": "preco", "label": "Preço", "field": "preco", "align": "right"},
+                {"name": "nivel", "label": "Comparação", "field": "nivel", "align": "left"},
+                {"name": "data", "label": "Coleta", "field": "data", "align": "left"},
+                {"name": "url", "label": "", "field": "url"},
+            ]).props("flat dense").classes("w-full")
+            t.add_slot("body-cell-desc", r'''<q-td :props="props" style="white-space: normal">{{ props.value }}</q-td>''')
+            t.add_slot("body-cell-url", r'''<q-td :props="props"><a v-if="props.value" :href="props.value"
+                target="_blank" rel="noopener">abrir</a></q-td>''')
+            if len(res.precos) > 12:
+                ui.link(f"ver todos os {len(res.precos)} preços", "/concorrentes").classes("text-caption")
+
+    def _registrar_preco(self, grupo_id: int):
+        from ..domain.services import concorrencia
+        with ui.dialog() as dlg, ui.card().classes("w-[560px] max-w-full"):
+            ui.label("Registrar preço de concorrente").classes("text-h6")
+            conc = ui.input("Concorrente *").props("outlined dense")
+            desc = ui.input("Produto similar *", value=self.r.nome).props("outlined dense")
+            preco = campo_numero("Preço (R$) *", None)
+            url = ui.input("Link (opcional)").props("outlined dense")
+            so_produto = ui.checkbox("comparável a este produto (senão, vale para o subgrupo)", value=True)
+
+            def ok():
+                try:
+                    with estado.sessao() as s:
+                        concorrencia.registrar(s, grupo_id=grupo_id, subgrupo_id=self.r.subgrupo_id,
+                                               produto_id=self.r.id if so_produto.value else None,
+                                               concorrente=conc.value, descricao=desc.value, preco=ler(preco.value),
+                                               url=url.value)
+                except ErroValidacao as e:
+                    ui.notify(str(e), type="negative")
+                    return
+                dlg.close()
+                ui.notify("Preço registrado.", type="positive")
+                self._concorrencia.refresh()
+            with ui.row().classes("w-full justify-end"):
+                ui.button("Cancelar", on_click=dlg.close).props("flat")
+                ui.button("Registrar", on_click=ok)
+        dlg.open()
 
     @ui.refreshable_method
     def _canais(self):

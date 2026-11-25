@@ -127,6 +127,8 @@ class Rascunho:
     materiais: list[LinhaMat] = field(default_factory=list)
     mao_de_obra: list[LinhaMO] = field(default_factory=list)
     margens_faixas: dict[int, float] = field(default_factory=dict)   # faixa_id -> margem própria
+    precos_aplicados: dict[int, float] = field(default_factory=dict) # faixa_id -> preço praticado hoje
+    custo_atual: float | None = None                                  # custo usado hoje (sistema anterior)
 
 
 def rascunho_de_produto(sessao: Session, produto_id: int) -> Rascunho:
@@ -143,7 +145,9 @@ def rascunho_de_produto(sessao: Session, produto_id: int) -> Rascunho:
         materiais=[LinhaMat(f.materia_prima_id, f.modo_qtd, _arred(f.quantidade), f.perda_pct, f.espacamento_cm)
                    for f in p.materiais],
         mao_de_obra=[LinhaMO(f.mao_de_obra_id, _arred(f.tempo), f.unidade_tempo) for f in p.mao_de_obra],
-        margens_faixas={m.faixa_id: m.margem_pct for m in p.margens_faixas})
+        margens_faixas={m.faixa_id: m.margem_pct for m in p.margens_faixas if m.margem_pct is not None},
+        precos_aplicados={m.faixa_id: m.preco_aplicado for m in p.margens_faixas if m.preco_aplicado is not None},
+        custo_atual=p.custo_atual)
 
 
 def _arred(v: float | None) -> float | None:
@@ -201,7 +205,27 @@ def calcular_rascunho(cat: Catalogo, r: Rascunho, *, perfil_id: int | None = Non
 
 def precos_faixas(cat: Catalogo, r: Rascunho, resultado: ResultadoPreco | None = None):
     """Os 5 preços (faixas) do rascunho sobre o custo atual."""
-    return faixas_svc.calcular(resultado or calcular_rascunho(cat, r), cat.faixas, r.margens_faixas)
+    return faixas_svc.calcular(resultado or calcular_rascunho(cat, r), cat.faixas, r.margens_faixas,
+                               r.precos_aplicados)
+
+
+@dataclass(frozen=True)
+class ComparativoCusto:
+    custo_atual: float | None        # informado (sistema anterior)
+    custo_calculado: float           # custo direto da ficha técnica (materiais + mão de obra)
+    custo_total: float               # custo direto + fixo unitário + variáveis em R$
+
+    @property
+    def diferenca(self) -> float | None:
+        return None if self.custo_atual is None else self.custo_calculado - self.custo_atual
+
+    @property
+    def diferenca_pct(self) -> float | None:
+        return 100 * (self.custo_calculado / self.custo_atual - 1) if self.custo_atual else None
+
+
+def comparar_custo(r: Rascunho, resultado: ResultadoPreco) -> ComparativoCusto:
+    return ComparativoCusto(r.custo_atual, resultado.cd, resultado.custo_total)
 
 
 @dataclass(frozen=True)
@@ -248,6 +272,11 @@ def validar(sessao: Session, r: Rascunho) -> list[tuple[str, str]]:
         erros.append(("preco_praticado", "não pode ser negativo"))
     if r.perfil_venda_id is not None and sessao.get(PerfilVenda, r.perfil_venda_id) is None:
         erros.append(("perfil_venda_id", "perfil inexistente"))
+    if r.custo_atual is not None and r.custo_atual < 0:
+        erros.append(("custo_atual", "não pode ser negativo"))
+    for fid, v in r.precos_aplicados.items():
+        if v is None or v < 0:
+            erros.append(("precos_aplicados", "preço aplicado não pode ser negativo"))
     for fid, m in r.margens_faixas.items():
         if sessao.get(FaixaPreco, fid) is None:
             erros.append(("margens_faixas", "faixa de preço inexistente"))
@@ -283,13 +312,15 @@ def salvar(sessao: Session, r: Rascunho) -> Produto:
     p.sku, p.nome = r.sku.strip(), " ".join(r.nome.split())
     p.subgrupo_id, p.largura_cm, p.altura_cm = r.subgrupo_id, r.largura_cm, r.altura_cm
     p.perfil_venda_id, p.margem_desejada_pct = r.perfil_venda_id, r.margem_desejada_pct
-    p.preco_praticado, p.ativo = r.preco_praticado, r.ativo
+    p.preco_praticado, p.ativo, p.custo_atual = r.preco_praticado, r.ativo, r.custo_atual
     p.materiais = [FichaMP(materia_prima_id=l.insumo_id, modo_qtd=l.modo_qtd, quantidade=l.quantidade,
                            perda_pct=l.perda_pct, espacamento_cm=l.espacamento_cm or 0.0, ordem=i)
                    for i, l in enumerate(r.materiais, start=1)]
     p.mao_de_obra = [FichaMO(mao_de_obra_id=l.etapa_id, tempo=l.tempo, unidade_tempo=l.unidade_tempo, ordem=i)
                      for i, l in enumerate(r.mao_de_obra, start=1)]
-    p.margens_faixas = [ProdutoFaixa(faixa_id=fid, margem_pct=m) for fid, m in sorted(r.margens_faixas.items())]
+    p.margens_faixas = [ProdutoFaixa(faixa_id=fid, margem_pct=r.margens_faixas.get(fid),
+                                     preco_aplicado=r.precos_aplicados.get(fid))
+                        for fid in sorted(set(r.margens_faixas) | set(r.precos_aplicados))]
     if r.id is None:
         sessao.add(p)
     sessao.flush()
@@ -328,7 +359,9 @@ def clonar(sessao: Session, origem_id: int, *, sku: str, nome: str, subgrupo_id:
         preco_praticado=base.preco_praticado if copiar_preco else None,
         materiais=[replace(l) for l in base.materiais] if copiar_materiais else [],
         mao_de_obra=[replace(l) for l in base.mao_de_obra] if copiar_mao_de_obra else [],
-        margens_faixas=dict(base.margens_faixas) if copiar_perfil_margem else {})
+        margens_faixas=dict(base.margens_faixas) if copiar_perfil_margem else {},
+        precos_aplicados=dict(base.precos_aplicados) if copiar_preco else {},
+        custo_atual=None)
     p = salvar(sessao, novo)
     p.clonado_de_id = origem_id
     sessao.flush()
@@ -350,17 +383,64 @@ class ResumoProduto:
     margem_desejada: float
     margem_praticada: float | None
     alertas: tuple[str, ...]
+    custo_atual: float | None = None
+    faixas_aplicadas: int = 0          # faixas com preço aplicado
+    faixas_abaixo: int = 0             # faixas cujo preço aplicado rende menos que a margem da faixa
 
     @property
     def abaixo_da_margem(self) -> bool:
-        return self.margem_praticada is not None and self.margem_praticada < self.margem_desejada - 1e-9
+        return (self.margem_praticada is not None and self.margem_praticada < self.margem_desejada - 1e-9) \
+            or self.faixas_abaixo > 0
+
+    @property
+    def diferenca_custo_pct(self) -> float | None:
+        return 100 * (self.cd / self.custo_atual - 1) if self.custo_atual else None
 
 
 def resumo_produtos(sessao: Session, apenas_ativos: bool = False) -> list[ResumoProduto]:
     linhas = []
+    lista_faixas = faixas_svc.listar(sessao)
     for p, r in calcular_todos(sessao, apenas_ativos=apenas_ativos):
         m = r.simular(p.preco_praticado).margem_pct if p.preco_praticado else None
+        pfs = faixas_svc.calcular(r, lista_faixas,
+                                  {x.faixa_id: x.margem_pct for x in p.margens_faixas if x.margem_pct is not None},
+                                  {x.faixa_id: x.preco_aplicado for x in p.margens_faixas if x.preco_aplicado is not None})
         linhas.append(ResumoProduto(p.id, p.sku, p.nome, f"{p.subgrupo.grupo.codigo} - {p.subgrupo.grupo.nome}",
                                     f"{p.subgrupo.codigo} - {p.subgrupo.nome}", p.ativo, r.cd, r.preco,
-                                    p.preco_praticado, r.pct_ml, m, r.alertas))
+                                    p.preco_praticado, r.pct_ml, m, r.alertas, p.custo_atual,
+                                    sum(1 for x in pfs if x.preco_aplicado), sum(1 for x in pfs if x.abaixo)))
     return linhas
+
+
+# ============================================================================ substituição de preços aplicados
+@dataclass(frozen=True)
+class Substituicao:
+    produto_id: int
+    sku: str
+    faixa: str
+    antes: float | None
+    depois: float
+
+
+def substituir_precos(sessao: Session, produto_ids: list[int], faixa_ids: list[int], arredondamento: str = "centavos",
+                      *, simular: bool = False) -> list[Substituicao]:
+    """Troca o preço aplicado das faixas escolhidas pelo preço calculado (arredondado).
+
+    simular=True só devolve a prévia, sem gravar. Faixas com margem impossível são ignoradas.
+    """
+    cat = carregar_catalogo(sessao)
+    mudancas: list[Substituicao] = []
+    for pid in produto_ids:
+        r = rascunho_de_produto(sessao, pid)
+        for pf in precos_faixas(cat, r):
+            if pf.faixa.id not in faixa_ids or pf.preco is None or pf.preco <= 0:
+                continue
+            novo = faixas_svc.arredondar(pf.preco, arredondamento)
+            antes = r.precos_aplicados.get(pf.faixa.id)
+            if antes is not None and abs(antes - novo) < 1e-9:
+                continue
+            mudancas.append(Substituicao(pid, r.sku, pf.faixa.nome, antes, novo))
+            r.precos_aplicados[pf.faixa.id] = novo
+        if not simular:
+            salvar(sessao, r)
+    return mudancas

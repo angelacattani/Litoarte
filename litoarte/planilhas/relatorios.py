@@ -45,10 +45,15 @@ def tabela_precos(sessao: Session, apenas_ativos: bool = True) -> pd.DataFrame:
             "Margem real no praticado (%)": m_real,
             "Ativo": "sim" if p.ativo else "não", "Alertas": "; ".join(r.alertas),
         }
-        proprias = {m.faixa_id: m.margem_pct for m in p.margens_faixas}
-        for pf in faixas_svc.calcular(r, lista_faixas, proprias):
+        d["Custo atual (informado)"] = p.custo_atual
+        d["Diferença custo calculado × atual (%)"] = 100 * (r.cd / p.custo_atual - 1) if p.custo_atual else None
+        proprias = {m.faixa_id: m.margem_pct for m in p.margens_faixas if m.margem_pct is not None}
+        aplicados = {m.faixa_id: m.preco_aplicado for m in p.margens_faixas if m.preco_aplicado is not None}
+        for pf in faixas_svc.calcular(r, lista_faixas, proprias, aplicados):
             d[f"{pf.faixa.nome} — margem (%)"] = pf.margem_pct
-            d[f"{pf.faixa.nome} — preço"] = pf.preco
+            d[f"{pf.faixa.nome} — preço calculado"] = pf.preco
+            d[f"{pf.faixa.nome} — preço aplicado"] = pf.preco_aplicado
+            d[f"{pf.faixa.nome} — margem real no aplicado (%)"] = pf.margem_aplicada
         if len(perfis) > 1:
             base = entrada_do_produto(p, padrao)
             for pf in perfis:

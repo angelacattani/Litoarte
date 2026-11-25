@@ -83,9 +83,9 @@ def test_clonar_copia_margens_proprias(sessao, canvas):
 def test_tabela_de_precos_exporta_as_faixas(sessao, canvas):
     df = R.tabela_precos(sessao)
     linha = df.iloc[0]
-    assert round(linha["Preço 1 — preço"], 2) == 126.96 and linha["Preço 5 — margem (%)"] == 30
+    assert round(linha["Preço 1 — preço calculado"], 2) == 126.96 and linha["Preço 5 — margem (%)"] == 30
     abas = pd.read_excel(io.BytesIO(R.xlsx({"Preços": df})), sheet_name=None)
-    assert "Preço 3 — preço" in abas["Preços"].columns
+    assert "Preço 3 — preço calculado" in abas["Preços"].columns
 
 
 def test_importacao_de_margens_por_faixa(sessao, canvas):

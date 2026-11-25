@@ -53,6 +53,8 @@ class TelaProdutos:
             ui.switch("inativos", on_change=lambda e: self._f("inativos", e.value)).props("dense")
             ui.switch("só margem abaixo", on_change=lambda e: self._f("abaixo", e.value)).props("dense")
             ui.space()
+            ui.button("Substituir preços", icon="price_change", on_click=self._substituir).props("outline") \
+                .mark("substituir-precos")
             ui.button("Novo produto", icon="add", on_click=lambda: ui.navigate.to("/produtos/novo")).mark("novo-produto")
             with ui.button("Planilhas", icon="table_view").props("outline").mark("menu-planilhas"):
                 with ui.menu():
@@ -71,10 +73,11 @@ class TelaProdutos:
             {"name": "sku", "label": "SKU", "field": "sku", "align": "left", "sortable": True},
             {"name": "nome", "label": "Nome", "field": "nome", "align": "left", "sortable": True},
             {"name": "subgrupo", "label": "Grupo › Subgrupo", "field": "classe", "align": "left", "sortable": True},
-            {"name": "cd", "label": "Custo direto", "field": "cd", "align": "right"},
+            {"name": "custo_atual", "label": "Custo atual", "field": "custo_atual", "align": "right"},
+            {"name": "cd", "label": "Custo calculado", "field": "cd", "align": "right"},
+            {"name": "dif", "label": "Dif. custo", "field": "dif", "align": "right"},
+            {"name": "faixas", "label": "5 preços", "field": "faixas", "align": "left"},
             {"name": "sugerido", "label": "Preço sugerido", "field": "sugerido", "align": "right"},
-            {"name": "praticado", "label": "Preço praticado", "field": "praticado", "align": "right"},
-            {"name": "margem", "label": "Margem real", "field": "margem", "align": "right"},
             {"name": "situacao", "label": "Situação", "field": "situacao", "align": "left"},
         ]
         self.tabela = ui.table(rows=[], columns=colunas, row_key="id", pagination={"rowsPerPage": 25}) \
@@ -119,11 +122,15 @@ class TelaProdutos:
             if termo and termo not in l.sku.lower() and termo not in l.nome.lower():
                 continue
             situacao = "abaixo" if l.abaixo_da_margem else "alerta" if l.alertas else \
-                "ok" if l.preco_praticado else "sem"
+                "ok" if (l.preco_praticado or l.faixas_aplicadas) else "sem"
             rows.append({"id": l.id, "sku": l.sku, "nome": l.nome + ("" if l.ativo else " (inativo)"),
                          "classe": f"{l.grupo} › {l.subgrupo}", "cd": brl(l.cd), "sugerido": brl(l.preco_sugerido),
-                         "praticado": brl(l.preco_praticado) if l.preco_praticado else "—",
-                         "margem": pct(l.margem_praticada) if l.margem_praticada is not None else "—",
+                         "custo_atual": brl(l.custo_atual) if l.custo_atual is not None else "—",
+                         "dif": (("+" if l.diferenca_custo_pct >= 0 else "") + pct(l.diferenca_custo_pct, 1))
+                         if l.diferenca_custo_pct is not None else "—",
+                         "faixas": (f"{l.faixas_aplicadas} aplicados" + (f", {l.faixas_abaixo} abaixo da margem"
+                                                                         if l.faixas_abaixo else ""))
+                         if l.faixas_aplicadas else "sem preços aplicados",
                          "situacao": situacao, "alertas": "; ".join(l.alertas)})
         self.tabela.rows = rows
         self.tabela.update()
@@ -141,6 +148,64 @@ class TelaProdutos:
                     ui.notify("Produto excluído.", type="positive")
                     self.atualizar()
                 ui.button("Excluir", color="negative", on_click=ok)
+        dlg.open()
+
+    def _substituir(self):
+        """Substitui os preços aplicados pelos calculados, nos produtos visíveis (filtro atual)."""
+        from ..domain.services import faixas as faixas_svc
+        ids = [r["id"] for r in self.tabela.rows]
+        if not ids:
+            ui.notify("Nenhum produto na lista (confira os filtros).", type="warning")
+            return
+        with estado.sessao() as s:
+            lista = faixas_svc.listar(s)
+        with ui.dialog() as dlg, ui.card().classes("w-[900px] max-w-full"):
+            ui.label(f"Substituir preços aplicados — {len(ids)} produto(s) da lista").classes("text-h6")
+            ui.label("Troca o preço aplicado das faixas escolhidas pelo preço calculado (custo do sistema + margem "
+                     "da faixa). Veja a prévia antes de confirmar.").classes("text-caption text-grey-7")
+            caixas = {f.id: ui.checkbox(f"{f.nome} ({f.margem_pct:g} %)".replace(".", ","), value=False)
+                      .mark(f"subst-faixa-{f.ordem}") for f in lista}
+            arred = ui.radio(faixas_svc.ARREDONDAMENTOS, value="90").props("dense inline").mark("subst-arred")
+            area = ui.column().classes("w-full")
+            with ui.row().classes("w-full justify-end"):
+                ui.button("Fechar", on_click=dlg.close).props("flat")
+                ui.button("Prévia", icon="visibility", on_click=lambda: previa()).props("outline").mark("subst-previa")
+                confirmar = ui.button("Substituir", icon="check", on_click=lambda: aplicar()).mark("subst-confirmar")
+                confirmar.disable()
+
+            def escolhidas():
+                return [fid for fid, c in caixas.items() if c.value]
+
+            def previa():
+                if not escolhidas():
+                    ui.notify("Escolha ao menos uma faixa.", type="warning")
+                    return
+                with estado.sessao() as s:
+                    mud = C.substituir_precos(s, ids, escolhidas(), arred.value, simular=True)
+                    s.rollback()
+                area.clear()
+                with area:
+                    if not mud:
+                        ui.label("Nenhum preço a alterar.").classes("text-grey-7")
+                        confirmar.disable()
+                        return
+                    ui.table(rows=[{"i": i, "sku": m.sku, "faixa": m.faixa, "antes": brl(m.antes) if m.antes else "—",
+                                    "depois": brl(m.depois)} for i, m in enumerate(mud)], row_key="i",
+                             pagination={"rowsPerPage": 10}, columns=[
+                                 {"name": "sku", "label": "SKU", "field": "sku", "align": "left"},
+                                 {"name": "faixa", "label": "Faixa", "field": "faixa", "align": "left"},
+                                 {"name": "antes", "label": "Aplicado hoje", "field": "antes", "align": "right"},
+                                 {"name": "depois", "label": "Novo", "field": "depois", "align": "right"}]) \
+                        .props("flat dense bordered").classes("w-full").mark("subst-tabela")
+                confirmar.text = f"Substituir {len(mud)} preço(s)"
+                confirmar.enable()
+
+            def aplicar():
+                with estado.sessao() as s:
+                    mud = C.substituir_precos(s, ids, escolhidas(), arred.value)
+                dlg.close()
+                ui.notify(f"{len(mud)} preço(s) substituído(s).", type="positive")
+                self.atualizar()
         dlg.open()
 
     def _exportar_precos(self):

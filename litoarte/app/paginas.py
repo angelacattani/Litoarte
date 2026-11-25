@@ -326,6 +326,54 @@ def pagina_configuracao():
             with ui.row().classes("w-full justify-end"):
                 ui.button("Salvar faixas", icon="save", on_click=salvar_faixas).mark("salvar-faixas")
 
+        # ---------------------------------------------------------------- busca de preços na web
+        from ..domain.services import concorrencia
+        with estado.sessao() as s:
+            cred = concorrencia.credenciais(s)
+        with ui.card().classes("w-full max-w-3xl"):
+            ui.label("Busca de preços na web").classes("text-subtitle1 text-weight-medium")
+            ui.markdown(
+                "**Mercado Livre** — crie uma aplicação gratuita em "
+                "[developers.mercadolivre.com.br](https://developers.mercadolivre.com.br) e informe o *Client ID* e o "
+                "*Client Secret*; o sistema obtém e renova o token sozinho. Se preferir, cole um *access token*.\n\n"
+                "**Google Shopping** — crie uma conta em [serpapi.com](https://serpapi.com) (plano gratuito limitado) e "
+                "informe a chave.\n\nAs credenciais ficam só no banco deste computador.").classes("text-caption")
+            with ui.grid(columns=2).classes("w-full gap-x-4"):
+                ml_id = ui.input("Mercado Livre — Client ID", value=cred.ml_client_id or "").props("outlined dense")
+                ml_sec = ui.input("Mercado Livre — Client Secret", value=cred.ml_client_secret or "",
+                                  password=True, password_toggle_button=True).props("outlined dense")
+                ml_tok = ui.input("Mercado Livre — access token (opcional)", value="",
+                                  placeholder="(configurado)" if cred.ml_access_token else "",
+                                  password=True, password_toggle_button=True).props("outlined dense")
+                serp = ui.input("SerpApi — chave (Google Shopping)", value=cred.serpapi_chave or "",
+                                password=True, password_toggle_button=True).props("outlined dense")
+
+            def salvar_cred():
+                with estado.sessao() as s:
+                    concorrencia.salvar_credenciais(s, ml_client_id=ml_id.value, ml_client_secret=ml_sec.value,
+                                                    ml_access_token=ml_tok.value, serpapi_chave=serp.value)
+                ui.notify("Credenciais de busca salvas.", type="positive")
+
+            async def testar(fonte):
+                from nicegui import run
+                from ..busca import ErroBusca
+                salvar_cred()
+                with estado.sessao() as s:
+                    c = concorrencia.credenciais(s)
+                try:
+                    res, novo = await run.io_bound(concorrencia.buscar_web, c, fonte, "caneca personalizada", 5)
+                except ErroBusca as e:
+                    ui.notify(f"Falhou: {e}", type="negative", multi_line=True, timeout=10000, close_button="OK")
+                    return
+                if novo:
+                    with estado.sessao() as s:
+                        concorrencia.guardar_token(s, *novo)
+                ui.notify(f"Funcionou: {len(res)} resultado(s) de teste.", type="positive")
+            with ui.row().classes("w-full justify-end gap-2"):
+                ui.button("Testar Mercado Livre", on_click=lambda: testar("mercadolivre")).props("flat")
+                ui.button("Testar Google Shopping", on_click=lambda: testar("google_shopping")).props("flat")
+                ui.button("Salvar credenciais", icon="save", on_click=salvar_cred).mark("salvar-credenciais")
+
 
 # ============================================================================ produtos e composição
 def pagina_produtos():
@@ -352,6 +400,38 @@ def pagina_composicao(pid: str):
 
 
 # ============================================================================ histórico de custos
+def pagina_concorrentes():
+    from ..domain.models import Grupo as G, Subgrupo as SG
+    from .busca_ui import abrir_busca
+    with moldura("Concorrentes", "/concorrentes"):
+        ui.label("Concorrentes associados aos grupos de produtos em que concorrem, e preços de produtos similares "
+                 "(registrados à mão, importados por planilha ou buscados na web).").classes("text-body2 text-grey-8")
+        precos = TelaCadastro("precos_concorrentes",
+                              descricao="Cada preço pertence a um grupo; opcionalmente a um subgrupo ou a um produto "
+                                        "seu equivalente. A composição de cada produto usa o nível mais próximo.")
+
+        def buscar():
+            with estado.sessao() as s:
+                grupos = {g.id: f"{g.codigo} - {g.nome}" for g in s.scalars(select(G).order_by(G.codigo))}
+                subs = {sg.id: (sg.grupo_id, f"{sg.codigo} - {sg.nome}") for sg in s.scalars(select(SG))}
+            if not grupos:
+                ui.notify("Cadastre grupos de produtos primeiro.", type="warning")
+                return
+            abrir_busca(grupos=grupos, subgrupos=subs, grupo_id=next(iter(grupos)), ao_gravar=precos.atualizar)
+        with ui.tabs().classes("w-full").props("align=left") as abas:
+            t_precos = ui.tab("Preços coletados", icon="sell")
+            t_conc = ui.tab("Concorrentes", icon="storefront")
+        with ui.tab_panels(abas, value=t_precos).classes("w-full bg-transparent"):
+            with ui.tab_panel(t_precos).classes("q-pa-none"):
+                with ui.row().classes("w-full justify-end"):
+                    ui.button("Buscar na web", icon="travel_explore", on_click=buscar).mark("concorrentes-buscar")
+                precos.render()
+            with ui.tab_panel(t_conc).classes("q-pa-none"):
+                TelaCadastro("concorrentes", ao_mudar=precos.atualizar,
+                             descricao="Grupos: códigos separados por ';' (ex.: QDR; PAP). Ao gravar preços de um "
+                                       "concorrente num grupo, ele é associado ao grupo automaticamente.").render()
+
+
 def pagina_historico():
     from datetime import date
 
@@ -403,6 +483,7 @@ ROTAS = {
     "/produtos": pagina_produtos,
     "/produtos/{pid}": pagina_composicao,
     "/historico": pagina_historico,
+    "/concorrentes": pagina_concorrentes,
 }
 
 

@@ -51,17 +51,35 @@ Linux/macOS: `./setup.sh && .venv/bin/python -m litoarte`.
 - **Simulador**: margem por controle deslizante (preço, lucro, margem de contribuição, ponto de
   equilíbrio) com "aplicar ao produto"; ou preço manual com o resultado e "usar como preço praticado".
 - **Comparativo por canal**: preço sugerido e margem no preço praticado em cada perfil de venda.
-- **5 preços por margem**: para o mesmo custo, cinco preços com margens diferentes (faixas
-  configuráveis em *Configuração*: nome e margem geral, ex.: Atacado 10 %, Revenda 15 %, Loja 20 %,
-  Varejo 25 %, Premium 30 %), com preço, lucro e margem de contribuição de cada uma. O produto pode ter
-  margem própria em qualquer faixa (vazio = margem geral). As faixas saem na exportação da tabela de
-  preços e podem ser importadas na planilha de produtos (`margem_faixa_1` … `margem_faixa_5`; `padrao`
-  remove a margem própria).
-- **Duplicar**: cria um produto com o mesmo subgrupo, ficha técnica, perfil e margem; permite trocar
-  SKU, nome, subgrupo e medidas antes de abrir a cópia.
+- **5 preços**: cada produto tem cinco faixas de preço (nomes e margens gerais em *Configuração*, ex.:
+  Atacado 10 %, Revenda 15 %, Loja 20 %, Varejo 25 %, Premium 30 %). Para cada faixa: **preço aplicado**
+  (o que você pratica hoje, editável para substituir) e a **margem real** que ele rende sobre o custo
+  calculado, em vermelho quando abaixo da margem da faixa. Os preços calculados ficam ocultos e aparecem
+  com a chave "mostrar preços calculados", com botão para usar o calculado como aplicado. Margem própria
+  do produto por faixa é opcional.
+- **Custo atual × calculado**: o custo que você usa hoje (campo *custo atual*) comparado ao custo da
+  ficha técnica (materiais + mão de obra), com a diferença em R$ e %.
+- **Concorrência**: preços de concorrentes do grupo do produto (nível produto → subgrupo → grupo), com
+  mínimo, mediana e máximo; **Buscar na web** (Mercado Livre ou Google Shopping) e registro manual.
 
 Campos numéricos aceitam o formato brasileiro (`139,90`, `1.234,56`) e também `139.90`.
 Ao sair da composição com alterações não salvas, o navegador pede confirmação.
+
+### Substituir preços em massa
+
+*Produtos → Substituir preços*: escolha as faixas e o arredondamento (centavos, terminar em ,90 ou real
+inteiro); a prévia mostra preço aplicado hoje → novo para os produtos da lista (respeita os filtros).
+Também pela planilha de produtos: `custo_atual` e `preco_faixa_1` … `preco_faixa_5` (`remover` apaga).
+
+### Concorrentes e busca de preços na web
+
+*Concorrentes* (menu): cadastro de concorrentes associados aos grupos em que concorrem e preços de
+produtos similares (grupo, opcionalmente subgrupo ou produto equivalente), com importação/exportação.
+**Buscar na web** consulta o Mercado Livre (API oficial) ou o Google Shopping (via SerpApi), mostra
+os resultados com mínimo/mediana/máximo (opção de ocultar extremos) e grava **só os itens marcados**.
+Credenciais em *Configuração → Busca de preços na web*: Client ID/Secret de uma aplicação gratuita do
+Mercado Livre (o token é obtido e renovado automaticamente; também aceita um access token colado) e a
+chave da SerpApi. As credenciais ficam apenas no banco local.
 
 ### Reajustes e relatórios
 
@@ -104,6 +122,7 @@ litoarte/
 ├── migrations/             Alembic: 0001 schema · 0002 dados de referência
 ├── app/                    interface NiceGUI: layout, telas, cadastro genérico, importação, composição
 ├── planilhas/              leitura XLSX/CSV, modelos/exportação, importação, relatórios XLSX
+├── busca/                  provedores de preço na web: Mercado Livre, Google Shopping (SerpApi)
 └── domain/
     ├── models.py           17 tabelas, CHECK/UNIQUE/FK, histórico automático de custos
     ├── pricing/            motor puro: engine.py (seção 3) e encaixe.py (peças por folha)
@@ -114,6 +133,8 @@ litoarte/
         ├── configuracao.py rateio, margem, perda
         ├── composicao.py   rascunho, cálculo em tempo real, gravação, clonagem, canais, lista
         ├── impacto.py      preços antes/depois de um reajuste (atualização em cascata)
+        ├── faixas.py       5 preços: margens, preços aplicados, margem real, arredondamento
+        ├── concorrencia.py concorrentes por grupo, preços coletados, busca web (sem banco)
         └── precificacao.py banco → motor; cálculo por produto/todos; produtos afetados
 tests/                      motor, banco, cadastros, importação e interface (simulação NiceGUI)
 ```

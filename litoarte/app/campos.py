@@ -23,8 +23,10 @@ def ler(v) -> float | None:
 
 
 def campo_numero(rotulo: str, valor: float | None = None, on_change: Callable[[float | None], None] | None = None,
-                 *, casas: int = 6, limpar: bool = True) -> ui.input:
-    el = ui.input(rotulo, value=num(valor, casas) if valor is not None else "") \
+                 *, casas: int = 6, limpar: bool = True, moeda: bool = False) -> ui.input:
+    """moeda=True: exibe sempre 2 casas (138,40)."""
+    el = ui.input(rotulo, value=num(valor, 2 if moeda else casas, minimo=2 if moeda else 0)
+                  if valor is not None else "") \
         .props("inputmode=decimal outlined dense" + (" clearable" if limpar else ""))
 
     def mudou(e):

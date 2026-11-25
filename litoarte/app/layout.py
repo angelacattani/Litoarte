@@ -18,6 +18,7 @@ MENU = [
     ("Custos fixos", "/custos-fixos", "account_balance"),
     ("Custos variáveis", "/custos-variaveis", "percent"),
     ("Grupos e subgrupos", "/grupos", "account_tree"),
+    ("Concorrentes", "/concorrentes", "storefront"),
     None,
     ("Unidades de medida", "/unidades", "straighten"),
     ("Fornecedores", "/fornecedores", "local_shipping"),
