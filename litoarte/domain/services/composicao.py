@@ -13,10 +13,11 @@ from dataclasses import dataclass, field, replace
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from ..models import (MODOS_QTD, UNIDADES_TEMPO, FichaMO, FichaMP, Grupo, MaoDeObra, MateriaPrima, PerfilVenda,
-                      Produto, Subgrupo)
+from ..models import (MODOS_QTD, UNIDADES_TEMPO, FaixaPreco, FichaMO, FichaMP, Grupo, MaoDeObra, MateriaPrima,
+                      PerfilVenda, Produto, ProdutoFaixa, Subgrupo)
 from ..pricing.engine import (EntradaProduto, ItemCustoVariavel, LinhaMaoObra, LinhaMaterial, ModoQtd,
                               RegrasEmpresa, ResultadoPreco, calcular)
+from . import faixas as faixas_svc
 from .cadastros import ErroValidacao
 from .precificacao import calcular_todos, regras_empresa
 
@@ -69,6 +70,7 @@ class Catalogo:
     perfis: dict[int, PerfilInfo]
     subgrupos: dict[int, tuple[str, str, str, str]]      # id -> (cód. grupo, nome grupo, cód. sub, nome sub)
     regras: RegrasEmpresa
+    faixas: list = field(default_factory=list)           # FaixaInfo (5 faixas de preço)
 
     @property
     def perfil_padrao(self) -> PerfilInfo | None:
@@ -90,7 +92,7 @@ def carregar_catalogo(sessao: Session) -> Catalogo:
     subgrupos = {s.id: (s.grupo.codigo, s.grupo.nome, s.codigo, s.nome)
                  for s in sessao.scalars(select(Subgrupo).join(Grupo).options(selectinload(Subgrupo.grupo))
                                          .order_by(Grupo.codigo, Subgrupo.codigo))}
-    return Catalogo(insumos, etapas, perfis, subgrupos, regras_empresa(sessao))
+    return Catalogo(insumos, etapas, perfis, subgrupos, regras_empresa(sessao), faixas_svc.listar(sessao))
 
 
 # ============================================================================ rascunho
@@ -124,11 +126,13 @@ class Rascunho:
     ativo: bool = True
     materiais: list[LinhaMat] = field(default_factory=list)
     mao_de_obra: list[LinhaMO] = field(default_factory=list)
+    margens_faixas: dict[int, float] = field(default_factory=dict)   # faixa_id -> margem própria
 
 
 def rascunho_de_produto(sessao: Session, produto_id: int) -> Rascunho:
     p = sessao.scalar(select(Produto).where(Produto.id == produto_id)
-                      .options(selectinload(Produto.materiais), selectinload(Produto.mao_de_obra))
+                      .options(selectinload(Produto.materiais), selectinload(Produto.mao_de_obra),
+                               selectinload(Produto.margens_faixas))
                       .execution_options(populate_existing=True))
     if p is None:
         raise LookupError(f"produto {produto_id} não encontrado")
@@ -138,7 +142,8 @@ def rascunho_de_produto(sessao: Session, produto_id: int) -> Rascunho:
         preco_praticado=p.preco_praticado, ativo=p.ativo,
         materiais=[LinhaMat(f.materia_prima_id, f.modo_qtd, _arred(f.quantidade), f.perda_pct, f.espacamento_cm)
                    for f in p.materiais],
-        mao_de_obra=[LinhaMO(f.mao_de_obra_id, _arred(f.tempo), f.unidade_tempo) for f in p.mao_de_obra])
+        mao_de_obra=[LinhaMO(f.mao_de_obra_id, _arred(f.tempo), f.unidade_tempo) for f in p.mao_de_obra],
+        margens_faixas={m.faixa_id: m.margem_pct for m in p.margens_faixas})
 
 
 def _arred(v: float | None) -> float | None:
@@ -194,6 +199,11 @@ def calcular_rascunho(cat: Catalogo, r: Rascunho, *, perfil_id: int | None = Non
     return replace(res, alertas=tuple(avisos))
 
 
+def precos_faixas(cat: Catalogo, r: Rascunho, resultado: ResultadoPreco | None = None):
+    """Os 5 preços (faixas) do rascunho sobre o custo atual."""
+    return faixas_svc.calcular(resultado or calcular_rascunho(cat, r), cat.faixas, r.margens_faixas)
+
+
 @dataclass(frozen=True)
 class Canal:
     perfil_id: int
@@ -238,6 +248,11 @@ def validar(sessao: Session, r: Rascunho) -> list[tuple[str, str]]:
         erros.append(("preco_praticado", "não pode ser negativo"))
     if r.perfil_venda_id is not None and sessao.get(PerfilVenda, r.perfil_venda_id) is None:
         erros.append(("perfil_venda_id", "perfil inexistente"))
+    for fid, m in r.margens_faixas.items():
+        if sessao.get(FaixaPreco, fid) is None:
+            erros.append(("margens_faixas", "faixa de preço inexistente"))
+        elif m is None or not 0 <= m < 100:
+            erros.append(("margens_faixas", f"margem da faixa {sessao.get(FaixaPreco, fid).nome}: entre 0 e 100 %"))
     for i, l in enumerate(r.materiais, start=1):
         if l.insumo_id is None or sessao.get(MateriaPrima, l.insumo_id) is None:
             erros.append((f"material {i}", "selecione o insumo"))
@@ -274,6 +289,7 @@ def salvar(sessao: Session, r: Rascunho) -> Produto:
                    for i, l in enumerate(r.materiais, start=1)]
     p.mao_de_obra = [FichaMO(mao_de_obra_id=l.etapa_id, tempo=l.tempo, unidade_tempo=l.unidade_tempo, ordem=i)
                      for i, l in enumerate(r.mao_de_obra, start=1)]
+    p.margens_faixas = [ProdutoFaixa(faixa_id=fid, margem_pct=m) for fid, m in sorted(r.margens_faixas.items())]
     if r.id is None:
         sessao.add(p)
     sessao.flush()
@@ -311,7 +327,8 @@ def clonar(sessao: Session, origem_id: int, *, sku: str, nome: str, subgrupo_id:
         margem_desejada_pct=base.margem_desejada_pct if copiar_perfil_margem else None,
         preco_praticado=base.preco_praticado if copiar_preco else None,
         materiais=[replace(l) for l in base.materiais] if copiar_materiais else [],
-        mao_de_obra=[replace(l) for l in base.mao_de_obra] if copiar_mao_de_obra else [])
+        mao_de_obra=[replace(l) for l in base.mao_de_obra] if copiar_mao_de_obra else [],
+        margens_faixas=dict(base.margens_faixas) if copiar_perfil_margem else {})
     p = salvar(sessao, novo)
     p.clonado_de_id = origem_id
     sessao.flush()

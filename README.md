@@ -51,6 +51,12 @@ Linux/macOS: `./setup.sh && .venv/bin/python -m litoarte`.
 - **Simulador**: margem por controle deslizante (preço, lucro, margem de contribuição, ponto de
   equilíbrio) com "aplicar ao produto"; ou preço manual com o resultado e "usar como preço praticado".
 - **Comparativo por canal**: preço sugerido e margem no preço praticado em cada perfil de venda.
+- **5 preços por margem**: para o mesmo custo, cinco preços com margens diferentes (faixas
+  configuráveis em *Configuração*: nome e margem geral, ex.: Atacado 10 %, Revenda 15 %, Loja 20 %,
+  Varejo 25 %, Premium 30 %), com preço, lucro e margem de contribuição de cada uma. O produto pode ter
+  margem própria em qualquer faixa (vazio = margem geral). As faixas saem na exportação da tabela de
+  preços e podem ser importadas na planilha de produtos (`margem_faixa_1` … `margem_faixa_5`; `padrao`
+  remove a margem própria).
 - **Duplicar**: cria um produto com o mesmo subgrupo, ficha técnica, perfil e margem; permite trocar
   SKU, nome, subgrupo e medidas antes de abrir a cópia.
 

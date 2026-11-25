@@ -268,6 +268,7 @@ def _objeto_ref(obj, campo: Campo):
 
 # ============================================================================ ganchos específicos
 SIM_NAO = "sim/não"
+N_FAIXAS = 5
 
 
 def _mp_ajustar(sessao, vals, existente, erros):
@@ -343,8 +344,48 @@ def _sub_exibir(o: Subgrupo) -> dict:
     return {"grupo": o.grupo.codigo, "grupo_nome": o.grupo.nome, "codigo": o.codigo, "nome": o.nome}
 
 
+def _prod_faixas(vals, erros):
+    """Colunas margem_faixa_1..5: número = margem própria; 'padrao' = volta à margem geral."""
+    faixas = {}
+    for i in range(1, N_FAIXAS + 1):
+        nome = f"margem_faixa_{i}"
+        if nome not in vals:
+            continue
+        bruto = vals.pop(nome)
+        if V.chave(bruto) in ("padrao", "geral", "remover"):
+            faixas[i] = None
+            continue
+        try:
+            m = V.numero(bruto)
+        except V.ValorInvalido as e:
+            erros.append((nome, str(e)))
+            continue
+        if m is not None and not 0 <= m < 100:
+            erros.append((nome, "entre 0 e 100 %"))
+            continue
+        faixas[i] = m
+    if faixas:
+        vals["_faixas"] = faixas
+
+
+def _prod_depois(sessao, obj: Produto, vals):
+    from ..models import FaixaPreco, ProdutoFaixa
+    for ordem, m in vals.get("_faixas", {}).items():
+        faixa = sessao.scalar(select(FaixaPreco).where(FaixaPreco.ordem == ordem))
+        if faixa is None:
+            continue
+        atual = next((x for x in obj.margens_faixas if x.faixa_id == faixa.id), None)
+        if m is None and atual is not None:
+            obj.margens_faixas.remove(atual)
+        elif m is not None and atual is not None:
+            atual.margem_pct = m
+        elif m is not None:
+            obj.margens_faixas.append(ProdutoFaixa(faixa_id=faixa.id, margem_pct=m))
+
+
 def _prod_ajustar(sessao, vals, existente, erros):
-    """Subgrupo informado por grupo + código do subgrupo."""
+    """Subgrupo informado por grupo + código do subgrupo; margens próprias das faixas."""
+    _prod_faixas(vals, erros)
     if "subgrupo" in vals or "grupo" in vals:
         g = vals.pop("grupo", None)
         sg = vals.pop("subgrupo", None)
@@ -364,7 +405,8 @@ def _prod_exibir(o: Produto) -> dict:
     return {"sku": o.sku, "nome": o.nome, "grupo": o.subgrupo.grupo.codigo, "subgrupo": o.subgrupo.codigo,
             "largura_cm": o.largura_cm, "altura_cm": o.altura_cm,
             "perfil_venda": o.perfil_venda.nome if o.perfil_venda else None,
-            "margem_desejada_pct": o.margem_desejada_pct, "preco_praticado": o.preco_praticado, "ativo": o.ativo}
+            "margem_desejada_pct": o.margem_desejada_pct, "preco_praticado": o.preco_praticado, "ativo": o.ativo,
+            **{f"margem_faixa_{m.faixa.ordem}": m.margem_pct for m in o.margens_faixas}}
 
 
 def _ficha_mp_buscar(sessao, vals):
@@ -481,7 +523,10 @@ MODULOS: dict[str, Modulo] = {m.chave: m for m in [
               ajuda="vazio = margem padrão da configuração"),
         Campo("preco_praticado", "Preço praticado (R$)", "numero", minimo=0),
         ATIVO,
-    ), ("sku",), ajustar=_prod_ajustar, exibir=_prod_exibir, ordem=(Produto.sku,)),
+        *(Campo(f"margem_faixa_{i}", f"Margem faixa {i} (%)", virtual=True, na_lista=False,
+                ajuda="margem própria do produto na faixa; vazio = margem geral; 'padrao' remove a própria")
+          for i in range(1, N_FAIXAS + 1)),
+    ), ("sku",), ajustar=_prod_ajustar, depois=_prod_depois, exibir=_prod_exibir, ordem=(Produto.sku,)),
 
     Modulo("ficha_materiais", "Ficha técnica — materiais", FichaMP, (
         Campo("produto", "Produto (SKU)", "ref", obrigatorio=True, atributo="produto_id", ref=(Produto, "sku"),

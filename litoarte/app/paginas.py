@@ -10,7 +10,8 @@ from ..domain.services import configuracao as cfgsvc, perfis as perfsvc
 from ..domain.services.cadastros import ErroValidacao
 from ..domain.services.precificacao import configuracao, regras_empresa
 from . import estado
-from .campos import campo_numero
+from ..domain.services import faixas as faixas_svc
+from .campos import campo_numero, ler
 from .crud import TelaCadastro
 from .formatos import brl, num, pct
 from .layout import moldura
@@ -294,6 +295,36 @@ def pagina_configuracao():
                           type="positive")
             with ui.row().classes("w-full justify-end"):
                 ui.button("Salvar", icon="save", on_click=salvar).mark("salvar-config")
+
+        # ---------------------------------------------------------------- faixas de preço
+        with estado.sessao() as s:
+            lista_faixas = faixas_svc.listar(s)
+        with ui.card().classes("w-full max-w-3xl"):
+            ui.label("Faixas de preço (5 margens)").classes("text-subtitle1 text-weight-medium")
+            ui.label("Todo produto tem estes 5 preços calculados sobre o mesmo custo. Dê nomes que façam sentido "
+                     "para a venda (ex.: Atacado, Revenda, Varejo). Um produto pode ter margem própria em qualquer "
+                     "faixa, na tela de composição.").classes("text-caption text-grey-7")
+            linhas = []
+            with ui.grid(columns="40px 1fr 160px").classes("w-full items-center gap-x-3 gap-y-1"):
+                for f in lista_faixas:
+                    ui.label(str(f.ordem)).classes("text-grey-7")
+                    nome = ui.input(value=f.nome).props("outlined dense").mark(f"cfg-faixa-nome-{f.ordem}")
+                    marg = campo_numero("Margem (%)", f.margem_pct, limpar=False).mark(f"cfg-faixa-margem-{f.ordem}")
+                    linhas.append((f, nome, marg))
+
+            def salvar_faixas():
+                dados = [{"id": f.id, "ordem": f.ordem, "nome": n.value, "margem_pct": ler(m.value)}
+                         for f, n, m in linhas]
+                try:
+                    with estado.sessao() as s:
+                        faixas_svc.salvar(s, dados)
+                except ErroValidacao as e:
+                    ui.notify("Faixas não salvas: " + "; ".join(f"{c}: {m}" for c, m in e.erros), type="negative",
+                              multi_line=True)
+                    return
+                ui.notify("Faixas de preço salvas.", type="positive")
+            with ui.row().classes("w-full justify-end"):
+                ui.button("Salvar faixas", icon="save", on_click=salvar_faixas).mark("salvar-faixas")
 
 
 # ============================================================================ produtos e composição

@@ -72,6 +72,7 @@ _CARGA_FICHA = (
     selectinload(Produto.mao_de_obra).selectinload(FichaMO.mao_de_obra),
     selectinload(Produto.perfil_venda).selectinload(PerfilVenda.custos),
     selectinload(Produto.subgrupo).selectinload(Subgrupo.grupo),
+    selectinload(Produto.margens_faixas),
 )
 
 

@@ -112,6 +112,7 @@ class TelaComposicao:
                             self._materiais()
                         with ui.tab_panel(t_mo).classes("q-pa-none"):
                             self._mao_de_obra()
+                self._faixas()
                 self._canais()
             with ui.column().classes("w-[400px] max-lg:w-full shrink-0 gap-4 sticky top-16"):
                 self._painel()
@@ -308,6 +309,7 @@ class TelaComposicao:
         self._sim_margem.refresh()
         self._sim_preco.refresh()
         self._canais.refresh()
+        self._rotulos_faixas()
 
     def _rotulos_materiais(self):
         res, r, cat = self.res, self.r, self.cat
@@ -446,6 +448,57 @@ class TelaComposicao:
         self.r.preco_praticado = preco
         self.ctl["preco_praticado"].value = num(preco, 6)
         self._mudou()
+
+    # ------------------------------------------------------------------ 5 preços (faixas de margem)
+    def _faixas(self):
+        """Campos de margem criados uma vez (não perdem o foco); valores atualizados em _rotulos_faixas."""
+        self.rot_faixas: dict[int, tuple] = {}
+        if not self.cat.faixas:
+            return
+        with ui.card().classes("w-full").mark("faixas"):
+            with ui.row().classes("w-full items-center"):
+                ui.label("5 preços por margem").classes("text-subtitle1 text-weight-medium")
+                ui.space()
+                ui.link("configurar faixas", "/configuracao").classes("text-caption")
+            ui.label("Mesmo custo, margens diferentes. Margem em branco = margem geral da faixa (Configuração).") \
+                .classes("text-caption text-grey-7")
+            with ui.grid(columns="minmax(110px,1.2fr) 130px repeat(3, minmax(90px,1fr))") \
+                    .classes("w-full items-center gap-x-3 gap-y-1"):
+                for t in ("Faixa", "Margem (%)", "Preço", "Lucro", "Margem contrib."):
+                    ui.label(t).classes("text-caption text-weight-medium text-grey-8" +
+                                        (" text-right" if t not in ("Faixa", "Margem (%)") else ""))
+                for f in self.cat.faixas:
+                    with ui.column().classes("gap-0"):
+                        ui.label(f.nome).classes("text-body2")
+                        ui.label(f"geral {num(f.margem_pct)} %").classes("text-caption text-grey-6")
+                    campo_numero("", self.r.margens_faixas.get(f.id), lambda v, fid=f.id: self._margem_faixa(fid, v)) \
+                        .props(f'debounce=300 placeholder="{num(f.margem_pct)} (geral)" input-class="text-right"') \
+                        .classes("w-full").mark(f"faixa-margem-{f.ordem}")
+                    preco = ui.label().classes("text-right text-weight-bold text-primary").mark(f"faixa-preco-{f.ordem}")
+                    lucro = ui.label().classes("text-right")
+                    mc = ui.label().classes("text-right text-grey-8")
+                    self.rot_faixas[f.id] = (preco, lucro, mc)
+        self._rotulos_faixas()
+
+    def _margem_faixa(self, faixa_id: int, valor):
+        if valor is None:
+            self.r.margens_faixas.pop(faixa_id, None)
+        else:
+            self.r.margens_faixas[faixa_id] = valor
+        self._mudou()
+
+    def _rotulos_faixas(self):
+        if not getattr(self, "rot_faixas", None):
+            return
+        for pf in C.precos_faixas(self.cat, self.r, self.res):
+            preco, lucro, mc = self.rot_faixas[pf.faixa.id]
+            if pf.lucro is None:
+                preco.text = "impossível" if pf.preco is None else "—"
+                lucro.text = mc.text = ""
+            else:
+                preco.text = brl(pf.preco)
+                lucro.text = brl(pf.lucro)
+                mc.text = pct(pf.margem_contribuicao_pct, 1)
 
     @ui.refreshable_method
     def _canais(self):

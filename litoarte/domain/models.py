@@ -262,6 +262,8 @@ class Produto(ComDatas, Base):
         back_populates="produto", cascade="all, delete-orphan", passive_deletes=True, order_by="FichaMP.ordem")
     mao_de_obra: Mapped[list["FichaMO"]] = relationship(
         back_populates="produto", cascade="all, delete-orphan", passive_deletes=True, order_by="FichaMO.ordem")
+    margens_faixas: Mapped[list["ProdutoFaixa"]] = relationship(
+        back_populates="produto", cascade="all, delete-orphan", passive_deletes=True)
 
     __table_args__ = (
         CheckConstraint("margem_desejada_pct IS NULL OR (margem_desejada_pct >= 0 AND margem_desejada_pct < 100)",
@@ -312,6 +314,28 @@ class FichaMO(Base):
     @property
     def horas(self) -> float:
         return self.tempo / 60 if self.unidade_tempo == "min" else self.tempo
+
+
+# ---------------------------------------------------------------------------- faixas de margem
+class FaixaPreco(ComDatas, Base):
+    """As 5 faixas de preço calculadas para todo produto (ex.: Atacado 15 %, Varejo 30 %)."""
+    __tablename__ = "faixa_preco"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ordem: Mapped[int] = mapped_column(Integer, unique=True)
+    nome: Mapped[str] = mapped_column(String(60))
+    margem_pct: Mapped[float] = mapped_column(Num)
+    __table_args__ = (CheckConstraint("margem_pct >= 0 AND margem_pct < 100", name="margem_faixa"),)
+
+
+class ProdutoFaixa(Base):
+    """Margem própria de um produto numa faixa (sobrepõe a margem geral da faixa)."""
+    __tablename__ = "produto_faixa"
+    produto_id: Mapped[int] = mapped_column(ForeignKey("produto.id", ondelete="CASCADE"), primary_key=True)
+    faixa_id: Mapped[int] = mapped_column(ForeignKey("faixa_preco.id", ondelete="CASCADE"), primary_key=True)
+    margem_pct: Mapped[float] = mapped_column(Num)
+    produto: Mapped["Produto"] = relationship(back_populates="margens_faixas")
+    faixa: Mapped[FaixaPreco] = relationship()
+    __table_args__ = (CheckConstraint("margem_pct >= 0 AND margem_pct < 100", name="margem_faixa"),)
 
 
 # ---------------------------------------------------------------------------- configuração e auditoria

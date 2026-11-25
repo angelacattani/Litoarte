@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..domain.models import HistoricoCustoMO, HistoricoCustoMP, PerfilVenda
 from ..domain.pricing.engine import ItemCustoVariavel, calcular
+from ..domain.services import faixas as faixas_svc
 from ..domain.services.impacto import LinhaImpacto
 from ..domain.services.precificacao import calcular_todos, entrada_do_produto, perfil_padrao, regras_empresa
 
@@ -24,6 +25,7 @@ FMT_NUM = '#,##0.######'
 # ============================================================================ dados
 def tabela_precos(sessao: Session, apenas_ativos: bool = True) -> pd.DataFrame:
     regras, padrao = regras_empresa(sessao), perfil_padrao(sessao)
+    lista_faixas = faixas_svc.listar(sessao)
     perfis = list(sessao.scalars(select(PerfilVenda).options(selectinload(PerfilVenda.custos))
                                  .order_by(PerfilVenda.padrao.desc(), PerfilVenda.nome)))
     linhas = []
@@ -43,6 +45,10 @@ def tabela_precos(sessao: Session, apenas_ativos: bool = True) -> pd.DataFrame:
             "Margem real no praticado (%)": m_real,
             "Ativo": "sim" if p.ativo else "não", "Alertas": "; ".join(r.alertas),
         }
+        proprias = {m.faixa_id: m.margem_pct for m in p.margens_faixas}
+        for pf in faixas_svc.calcular(r, lista_faixas, proprias):
+            d[f"{pf.faixa.nome} — margem (%)"] = pf.margem_pct
+            d[f"{pf.faixa.nome} — preço"] = pf.preco
         if len(perfis) > 1:
             base = entrada_do_produto(p, padrao)
             for pf in perfis:
